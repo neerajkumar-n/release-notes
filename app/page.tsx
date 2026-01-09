@@ -13,7 +13,7 @@ type ReleaseItem = {
 
 type ReleaseWeek = {
   id: string;
-  date: string; // yyyy-mm-dd
+  date: string; // yyyy-mm-dd (release date)
   headline: string;
   items: ReleaseItem[];
 };
@@ -27,7 +27,6 @@ export default function Page() {
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>(
     'All'
   );
-  const [search, setSearch] = useState('');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
@@ -48,7 +47,7 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // All unique connectors for dropdown
+  // Unique connectors for dropdown
   const connectors = useMemo(() => {
     const set = new Set<string>();
     data.forEach((week) =>
@@ -59,28 +58,23 @@ export default function Page() {
     return Array.from(set).sort();
   }, [data]);
 
-  // Apply filters
+  // Helper to compare yyyy-mm-dd strings safely
   const filteredWeeks = useMemo(() => {
-    const from = fromDate ? new Date(fromDate) : null;
-    const to = toDate ? new Date(toDate) : null;
-
     return data
       .map((week) => {
-        const weekDate = new Date(week.date);
-
         const dateOk =
-          (!from || weekDate >= from) && (!to || weekDate <= to);
+          (!fromDate || week.date >= fromDate) &&
+          (!toDate || week.date <= toDate);
 
-        if (!dateOk) return { ...week, items: [] as ReleaseItem[] };
+        if (!dateOk) {
+          return { ...week, items: [] as ReleaseItem[] };
+        }
 
         const items = week.items.filter((item) => {
-          if (connectorFilter !== 'All' && item.connector !== connectorFilter)
+          if (connectorFilter !== 'All' && item.connector !== connectorFilter) {
             return false;
-          if (typeFilter !== 'All' && item.type !== typeFilter) return false;
-          if (
-            search &&
-            !item.title.toLowerCase().includes(search.toLowerCase())
-          ) {
+          }
+          if (typeFilter !== 'All' && item.type !== typeFilter) {
             return false;
           }
           return true;
@@ -89,7 +83,7 @@ export default function Page() {
         return { ...week, items };
       })
       .filter((week) => week.items.length > 0);
-  }, [data, fromDate, toDate, connectorFilter, typeFilter, search]);
+  }, [data, fromDate, toDate, connectorFilter, typeFilter]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-50">
@@ -105,7 +99,8 @@ export default function Page() {
           <p className="max-w-2xl text-sm text-slate-300">
             A single view of what changed in Hyperswitch, grouped by weekly
             releases from our GitHub changelog. Filter by connector, change
-            type, date range, and search for specific updates.
+            type, and date range. Use a Wednesday–to–Wednesday window to view a
+            specific weekly release cycle.
           </p>
 
           {/* Small refresh button */}
@@ -121,7 +116,7 @@ export default function Page() {
           </button>
         </section>
 
-        {/* Filters + search button */}
+        {/* Filters */}
         <section className="mb-6 flex flex-col gap-4 rounded-xl border border-white/5 bg-slate-900/60 p-4 shadow-sm md:flex-row md:items-end md:justify-between">
           <div className="flex flex-1 flex-col gap-3 md:flex-row">
             {/* Connector */}
@@ -193,30 +188,9 @@ export default function Page() {
               </div>
             </div>
           </div>
-
-          {/* Search (filters already apply live; this is just an explicit CTA) */}
-          <div className="flex flex-col gap-3 md:w-80">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-300">
-                Search
-              </label>
-              <input
-                placeholder="Search in titles..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              />
-            </div>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-sm transition hover:bg-sky-400"
-            >
-              Search
-            </button>
-          </div>
         </section>
 
-        {/* Weeks */}
+        {/* Weekly releases */}
         <section className="space-y-6">
           {filteredWeeks.map((week) => (
             <div
@@ -272,8 +246,8 @@ export default function Page() {
 
           {filteredWeeks.length === 0 && !loading && (
             <p className="text-sm text-slate-400">
-              No release notes match these filters. Try adjusting your filters
-              or date range.
+              No release notes match this connector / type / date range. Try
+              adjusting the window (for example, Wednesday–to–Wednesday).
             </p>
           )}
         </section>
