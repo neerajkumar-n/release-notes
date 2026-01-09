@@ -19,7 +19,9 @@ type ReleaseWeek = {
 };
 
 export default function Page() {
+  // Full data from the API
   const [allWeeks, setAllWeeks] = useState<ReleaseWeek[]>([]);
+  // What we actually show after applying filters
   const [filteredWeeks, setFilteredWeeks] = useState<ReleaseWeek[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -31,7 +33,7 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // Fetch from API (GitHub changelog)
+  // Fetch from our API (which reads the GitHub changelog)
   async function fetchData() {
     setLoading(true);
     try {
@@ -45,33 +47,55 @@ export default function Page() {
     }
   }
 
+  // Initial load
   useEffect(() => {
     fetchData();
   }, []);
 
-  // Unique connectors for dropdown (based on full data)
+  // Unique connectors for the dropdown (based on full data)
   const connectors = useMemo(() => {
     const set = new Set<string>();
     allWeeks.forEach((week) =>
       week.items.forEach((item) => {
-        if (item.connector) set.add(item.connector);
+        if (item.connector) {
+          set.add(item.connector);
+        }
       })
     );
     return Array.from(set).sort();
   }, [allWeeks]);
 
-  // Recompute filtered weeks whenever filters or data change
+  // Recompute filtered list whenever data or any filter changes
   useEffect(() => {
+    // Convert filter dates to timestamps (milliseconds)
+    const fromTime =
+      fromDate && !Number.isNaN(Date.parse(fromDate))
+        ? Date.parse(fromDate)
+        : null;
+    const toTime =
+      toDate && !Number.isNaN(Date.parse(toDate)) ? Date.parse(toDate) : null;
+
     const next: ReleaseWeek[] = allWeeks
       .map((week) => {
-        const dateOk =
-          (!fromDate || week.date >= fromDate) &&
-          (!toDate || week.date <= toDate);
+        // Parse week date (from API) to timestamp
+        const weekTime = !Number.isNaN(Date.parse(week.date))
+          ? Date.parse(week.date)
+          : null;
 
-        if (!dateOk) {
+        // If we can't parse the week date, hide it
+        if (weekTime === null) {
           return { ...week, items: [] as ReleaseItem[] };
         }
 
+        // Date range checks (inclusive)
+        if (fromTime !== null && weekTime < fromTime) {
+          return { ...week, items: [] as ReleaseItem[] };
+        }
+        if (toTime !== null && weekTime > toTime) {
+          return { ...week, items: [] as ReleaseItem[] };
+        }
+
+        // Apply connector + type filters to the items
         const items = week.items.filter((item) => {
           if (connectorFilter !== 'All' && item.connector !== connectorFilter) {
             return false;
@@ -84,6 +108,7 @@ export default function Page() {
 
         return { ...week, items };
       })
+      // Only keep weeks that still have visible items
       .filter((week) => week.items.length > 0);
 
     setFilteredWeeks(next);
