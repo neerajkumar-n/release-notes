@@ -238,4 +238,7 @@ export default function Page() {
                           href={item.prUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex text-[11px] font-medium text-sky-300 hover:text-sky-200"
+                          className="inline-flex text-xs font-medium text-sky-300 hover:text-sky-200"
+                        >
+                          View PR #{item.prNumber}
+                        </a>
