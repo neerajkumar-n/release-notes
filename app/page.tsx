@@ -7,6 +7,8 @@ type ReleaseItem = {
   title: string;
   type: 'Feature' | 'Bug Fix';
   connector: string | null;
+  prNumber?: string;
+  prUrl?: string;
 };
 
 type ReleaseWeek = {
@@ -46,7 +48,7 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // All unique connectors for filter dropdown
+  // All unique connectors for dropdown
   const connectors = useMemo(() => {
     const set = new Set<string>();
     data.forEach((week) =>
@@ -86,27 +88,6 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-50">
-      {/* Fake nav bar matching hyperswitch style */}
-      <header className="border-b border-white/5 bg-slate-950/60 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-full bg-sky-500" />
-            <span className="text-sm font-semibold tracking-tight">
-              JUSPAY <span className="text-slate-300">hyperswitch</span>
-            </span>
-          </div>
-          <nav className="hidden gap-6 text-sm text-slate-300 md:flex">
-            <span>Solutions</span>
-            <span>Resources</span>
-            <span>Developers</span>
-            <span>Pricing</span>
-          </nav>
-          <button className="rounded-full border border-slate-600 px-4 py-1 text-sm font-medium text-slate-100 hover:border-sky-500 hover:text-sky-200">
-            Contact Us
-          </button>
-        </div>
-      </header>
-
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-10">
         {/* Hero */}
         <section className="mb-10">
@@ -123,7 +104,7 @@ export default function Page() {
           </p>
         </section>
 
-        {/* Controls */}
+        {/* Filters + refresh */}
         <section className="mb-6 flex flex-col gap-4 rounded-xl border border-white/5 bg-slate-900/60 p-4 shadow-sm md:flex-row md:items-end md:justify-between">
           <div className="flex flex-1 flex-col gap-3 md:flex-row">
             {/* Connector */}
@@ -188,7 +169,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Search + Refresh */}
+          {/* Search + refresh */}
           <div className="flex flex-col gap-3 md:w-80">
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-300">
@@ -222,7 +203,7 @@ export default function Page() {
               key={week.id}
               className="rounded-xl border border-white/5 bg-slate-900/70 p-5 shadow-sm"
             >
-              <div className="mb-3 flex items-baseline justify-between">
+              <div className="mb-3 flex items-baseline justify-between gap-4">
                 <h2 className="text-lg font-semibold text-slate-50">
                   {week.headline}
                 </h2>
@@ -230,38 +211,31 @@ export default function Page() {
               </div>
               <ul className="space-y-3">
                 {week.items.map((item, idx) => (
-                  <li key={idx} className="flex gap-3 text-sm">
+                  <li
+                    key={idx}
+                    className="flex flex-col gap-1 text-sm md:flex-row md:items-start md:gap-3"
+                  >
                     <span
-                      className={`mt-1 inline-flex h-fit rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      className={`inline-flex h-fit w-max items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight tracking-wide ${
                         item.type === 'Feature'
                           ? 'bg-emerald-500/15 text-emerald-300'
                           : 'bg-amber-500/15 text-amber-300'
                       }`}
                     >
-                      {item.type.toUpperCase()}
+                      {item.type === 'Feature' ? 'FEATURE' : 'BUG FIX'}
                     </span>
-                    <span className="text-slate-200">
-                      {item.connector && (
-                        <strong className="text-slate-100">
-                          {item.connector}:{' '}
-                        </strong>
-                      )}
-                      {item.title}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-
-          {filteredWeeks.length === 0 && !loading && (
-            <p className="text-sm text-slate-400">
-              No release notes match these filters. Try adjusting your filters
-              or date range.
-            </p>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
+                    <div className="flex-1 space-y-1">
+                      <p className="text-slate-200">
+                        {item.connector && (
+                          <strong className="text-slate-100">
+                            {item.connector}:{' '}
+                          </strong>
+                        )}
+                        {item.title}
+                      </p>
+                      {item.prNumber && item.prUrl && (
+                        <a
+                          href={item.prUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex text-[11px] font-medium text-sky-300 hover:text-sky-200"
