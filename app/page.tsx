@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, CalendarDays } from 'lucide-react';
 
 type ReleaseItem = {
   title: string;
@@ -61,11 +61,15 @@ export default function Page() {
 
   // Apply filters
   const filteredWeeks = useMemo(() => {
+    const from = fromDate ? new Date(fromDate) : null;
+    const to = toDate ? new Date(toDate) : null;
+
     return data
       .map((week) => {
+        const weekDate = new Date(week.date);
+
         const dateOk =
-          (!fromDate || week.date >= fromDate) &&
-          (!toDate || week.date <= toDate);
+          (!from || weekDate >= from) && (!to || weekDate <= to);
 
         if (!dateOk) return { ...week, items: [] as ReleaseItem[] };
 
@@ -91,7 +95,7 @@ export default function Page() {
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-50">
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-10">
         {/* Hero */}
-        <section className="mb-10">
+        <section className="mb-6">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-sky-400">
             Release Notes
           </p>
@@ -103,9 +107,21 @@ export default function Page() {
             releases from our GitHub changelog. Filter by connector, change
             type, date range, and search for specific updates.
           </p>
+
+          {/* Small refresh button */}
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-600 px-3 py-1 text-xs text-slate-300 hover:border-sky-500 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw
+              className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`}
+            />
+            Refresh from GitHub
+          </button>
         </section>
 
-        {/* Filters + refresh */}
+        {/* Filters + search button */}
         <section className="mb-6 flex flex-col gap-4 rounded-xl border border-white/5 bg-slate-900/60 p-4 shadow-sm md:flex-row md:items-end md:justify-between">
           <div className="flex flex-1 flex-col gap-3 md:flex-row">
             {/* Connector */}
@@ -145,32 +161,40 @@ export default function Page() {
               </select>
             </div>
 
-            {/* Date range */}
+            {/* From date */}
             <div className="w-full md:w-40">
               <label className="mb-1 block text-xs font-semibold text-slate-300">
                 From date
               </label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 pr-9 text-sm text-slate-50 outline-none focus:border-sky-500"
+                />
+                <CalendarDays className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              </div>
             </div>
+
+            {/* To date */}
             <div className="w-full md:w-40">
               <label className="mb-1 block text-xs font-semibold text-slate-300">
                 To date
               </label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 pr-9 text-sm text-slate-50 outline-none focus:border-sky-500"
+                />
+                <CalendarDays className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              </div>
             </div>
           </div>
 
-          {/* Search + refresh */}
+          {/* Search (filters already apply live; this is just an explicit CTA) */}
           <div className="flex flex-col gap-3 md:w-80">
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-300">
@@ -184,15 +208,10 @@ export default function Page() {
               />
             </div>
             <button
-              onClick={fetchData}
-              disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-sm transition hover:bg-sky-400"
             >
-              <RefreshCw
-                size={16}
-                className={loading ? 'animate-spin' : ''}
-              />
-              {loading ? 'Fetching…' : 'Fetch latest details'}
+              Search
             </button>
           </div>
         </section>
