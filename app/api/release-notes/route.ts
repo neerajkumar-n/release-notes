@@ -22,8 +22,10 @@ function cleanTitle(raw: string): string {
 
   // Remove PR links like ([#10588](https://github.com/...))
   text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, '');
-  // Remove any remaining GitHub commit links in parentheses
+  // Remove any remaining GitHub links in parentheses
   text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, '');
+  // Remove empty parentheses that are left behind
+  text = text.replace(/\(\s*\)/g, '');
   // Remove markdown bold markers
   text = text.replace(/\*\*/g, '');
   // Remove connector markers like [ADYEN]
@@ -32,7 +34,7 @@ function cleanTitle(raw: string): string {
   text = text.replace(/`/g, '');
   // Collapse multiple spaces
   text = text.replace(/\s{2,}/g, ' ');
-  // Trim punctuation/whitespace at ends
+  // Trim trailing punctuation / whitespace
   text = text.trim();
   text = text.replace(/[-–:,;.\s]+$/, '');
 
@@ -54,7 +56,7 @@ export async function GET() {
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Version like: ## [2026.01.09.0]
+      // Version like: ## [2026.01.05.0]
       const versionMatch = trimmed.match(
         /^##\s*\[?(\d{4})\.(\d{1,2})\.(\d{1,2})\.\d{1,2}\]?/
       );
