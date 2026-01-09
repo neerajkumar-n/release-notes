@@ -19,7 +19,8 @@ type ReleaseWeek = {
 };
 
 export default function Page() {
-  const [data, setData] = useState<ReleaseWeek[]>([]);
+  const [allWeeks, setAllWeeks] = useState<ReleaseWeek[]>([]);
+  const [filteredWeeks, setFilteredWeeks] = useState<ReleaseWeek[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -30,12 +31,13 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
+  // Fetch from API (GitHub changelog)
   async function fetchData() {
     setLoading(true);
     try {
       const res = await fetch('/api/release-notes');
       const json = await res.json();
-      setData(json);
+      setAllWeeks(json);
     } catch (e) {
       console.error(e);
     } finally {
@@ -47,20 +49,20 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // Unique connectors for dropdown
+  // Unique connectors for dropdown (based on full data)
   const connectors = useMemo(() => {
     const set = new Set<string>();
-    data.forEach((week) =>
+    allWeeks.forEach((week) =>
       week.items.forEach((item) => {
         if (item.connector) set.add(item.connector);
       })
     );
     return Array.from(set).sort();
-  }, [data]);
+  }, [allWeeks]);
 
-  // Helper to compare yyyy-mm-dd strings safely
-  const filteredWeeks = useMemo(() => {
-    return data
+  // Recompute filtered weeks whenever filters or data change
+  useEffect(() => {
+    const next: ReleaseWeek[] = allWeeks
       .map((week) => {
         const dateOk =
           (!fromDate || week.date >= fromDate) &&
@@ -83,7 +85,9 @@ export default function Page() {
         return { ...week, items };
       })
       .filter((week) => week.items.length > 0);
-  }, [data, fromDate, toDate, connectorFilter, typeFilter]);
+
+    setFilteredWeeks(next);
+  }, [allWeeks, connectorFilter, typeFilter, fromDate, toDate]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-50">
@@ -103,7 +107,7 @@ export default function Page() {
             specific weekly release cycle.
           </p>
 
-          {/* Small refresh button */}
+          {/* Refresh button */}
           <button
             onClick={fetchData}
             disabled={loading}
