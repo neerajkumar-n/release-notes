@@ -76,8 +76,9 @@ export default function Page() {
           if (
             search &&
             !item.title.toLowerCase().includes(search.toLowerCase())
-          )
+          ) {
             return false;
+          }
           return true;
         });
 
@@ -242,3 +243,22 @@ export default function Page() {
                         >
                           View PR #{item.prNumber}
                         </a>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+
+          {filteredWeeks.length === 0 && !loading && (
+            <p className="text-sm text-slate-400">
+              No release notes match these filters. Try adjusting your filters
+              or date range.
+            </p>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
