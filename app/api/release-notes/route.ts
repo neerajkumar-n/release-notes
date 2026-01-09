@@ -3,9 +3,11 @@ import { NextResponse } from 'next/server';
 export const runtime = 'edge';
 
 type ReleaseItem = {
-  title: string;
+  title: string; // cleaned, PM-friendly text
   type: 'Feature' | 'Bug Fix';
   connector: string | null;
+  prNumber?: string;
+  prUrl?: string;
 };
 
 type ReleaseWeek = {
@@ -14,6 +16,28 @@ type ReleaseWeek = {
   headline: string;
   items: ReleaseItem[];
 };
+
+function cleanTitle(raw: string): string {
+  let text = raw;
+
+  // Remove PR links like ([#10588](https://github.com/...))
+  text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, '');
+  // Remove any remaining GitHub commit links in parentheses
+  text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, '');
+  // Remove markdown bold markers
+  text = text.replace(/\*\*/g, '');
+  // Remove connector markers like [ADYEN]
+  text = text.replace(/\[[^\]]+\]/g, '');
+  // Remove stray backticks
+  text = text.replace(/`/g, '');
+  // Collapse multiple spaces
+  text = text.replace(/\s{2,}/g, ' ');
+  // Trim punctuation/whitespace at ends
+  text = text.trim();
+  text = text.replace(/[-–:,;.\s]+$/, '');
+
+  return text;
+}
 
 export async function GET() {
   try {
@@ -26,19 +50,17 @@ export async function GET() {
     const lines = text.split('\n');
     const weeks: ReleaseWeek[] = [];
     let currentWeek: ReleaseWeek | null = null;
-    let currentVersion = '';
 
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Detect version like: ## [2025.12.15.0]
+      // Version like: ## [2026.01.09.0]
       const versionMatch = trimmed.match(
         /^##\s*\[?(\d{4})\.(\d{1,2})\.(\d{1,2})\.\d{1,2}\]?/
       );
       if (versionMatch) {
         const [, y, m, d] = versionMatch;
         const dateStr = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-        currentVersion = `${y}.${m}.${d}`;
 
         currentWeek = {
           id: dateStr,
@@ -50,22 +72,36 @@ export async function GET() {
         continue;
       }
 
-      // Bullet lines (very simple heuristic)
+      // Bullet lines
       if (trimmed.startsWith('-') && currentWeek) {
         const content = trimmed.substring(1).trim();
+        if (!content) continue;
 
         const lower = content.toLowerCase();
         const type: 'Feature' | 'Bug Fix' = lower.includes('fix')
           ? 'Bug Fix'
           : 'Feature';
 
+        // Connector like [ADYEN], [Stripe], [WorldpayWPG]
         const connectorMatch = content.match(/\[([a-zA-Z0-9_\s]+)\]/);
-        const connector = connectorMatch ? connectorMatch[1] : null;
+        const connector = connectorMatch ? connectorMatch[1].trim() : null;
+
+        // PR number + URL
+        const prMatch = content.match(
+          /\[#(\d+)\]\((https:\/\/github\.com\/[^\)]+)\)/
+        );
+        const prNumber = prMatch?.[1];
+        const prUrl = prMatch?.[2];
+
+        const title = cleanTitle(content);
+        if (!title) continue;
 
         currentWeek.items.push({
-          title: content,
+          title,
           type,
           connector,
+          prNumber,
+          prUrl,
         });
       }
     }
