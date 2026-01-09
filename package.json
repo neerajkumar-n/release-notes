@@ -18,12 +18,12 @@
     "tailwind-merge": "latest"
   },
   "devDependencies": {
-    "typescript": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "autoprefixer": "latest",
-    "postcss": "latest",
-    "tailwindcss": "latest"
-  }
+  "typescript": "latest",
+  "@types/node": "latest",
+  "@types/react": "latest",
+  "@types/react-dom": "latest",
+  "tailwindcss": "^3.4.0",
+  "postcss": "^8.4.0",
+  "autoprefixer": "^10.4.0"
+}
 }
