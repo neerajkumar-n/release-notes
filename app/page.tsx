@@ -50,7 +50,8 @@ export default function Page() {
   // --- AI STATE ---
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [last summarizedRange, setLastSummarizedRange] = useState<string>('');
+  // FIX: Removed space in variable name below
+  const [lastSummarizedRange, setLastSummarizedRange] = useState<string>('');
 
   // Filters
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
@@ -173,7 +174,9 @@ export default function Page() {
     // 2. We haven't already summarized this exact range (prevents infinite loops)
     // 3. We are not currently loading
     const currentRange = fromDate && toDate ? `${fromDate} to ${toDate}` : 'All';
-    if (filteredItems.length > 0 && filteredItems.length < 100 && currentRange !== last summarizedRange && !loading) {
+    
+    // FIX: Using corrected variable name here
+    if (filteredItems.length > 0 && filteredItems.length < 100 && currentRange !== lastSummarizedRange && !loading) {
        // We use a small timeout to let the UI settle before blasting the API
        const timer = setTimeout(() => {
          generateAiSummary(filteredItems);
@@ -181,7 +184,7 @@ export default function Page() {
        return () => clearTimeout(timer);
     }
 
-  }, [allItems, connectorFilter, typeFilter, fromDate, toDate, loading, last summarizedRange, generateAiSummary]);
+  }, [allItems, connectorFilter, typeFilter, fromDate, toDate, loading, lastSummarizedRange, generateAiSummary]);
 
 
   // --- RENDER ---
