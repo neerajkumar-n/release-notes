@@ -21,6 +21,7 @@
   "typescript": "latest",
   "@types/node": "latest",
   "@types/react": "latest",
+  "@google/generative-ai": "latest",
   "openai": "latest",
   "@types/react-dom": "latest",
   "tailwindcss": "^3.4.0",
