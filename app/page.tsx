@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, CalendarDays, FileText, LayoutList } from 'lucide-react';
+import { RefreshCw, CalendarDays, FileText, LayoutList, ChevronDown } from 'lucide-react';
 import { 
   parseISO, 
   isBefore, 
@@ -30,7 +30,6 @@ type ReleaseGroup = {
   items: ReleaseItem[];
 };
 
-// Refined Categories for C-Level View
 type SummaryCategory = 
   | 'Global Connectivity' 
   | 'Security & Governance' 
@@ -49,20 +48,12 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- 1. SMART TEXT POLISHER (The "Business Friendly" Logic) ---
+  // --- SMART TEXT POLISHER ---
   function polishText(text: string, type: 'Feature' | 'Bug Fix'): string {
     let polished = text;
-
-    // A. Remove technical noise
-    polished = polished.replace(/^feat:\s*/i, '')
-                       .replace(/^fix:\s*/i, '')
-                       .replace(/^chore:\s*/i, '')
-                       .replace(/^refactor:\s*/i, '');
-
-    // B. Convert snake_case to Human Readable (e.g. merchant_defined_fields -> merchant defined fields)
+    polished = polished.replace(/^feat:\s*/i, '').replace(/^fix:\s*/i, '').replace(/^chore:\s*/i, '').replace(/^refactor:\s*/i, '');
     polished = polished.replace(/([a-z])_([a-z])/g, '$1 $2');
 
-    // C. "Business Verb" Swapping - Make it sound proactive
     if (type === 'Bug Fix') {
        if (polished.match(/^fix/i)) polished = polished.replace(/^fix(ed)?\s/i, 'Resolved stability issue with ');
        if (polished.match(/^correct/i)) polished = polished.replace(/^correct(ed)?\s/i, 'Fixed data discrepancy in ');
@@ -71,27 +62,17 @@ export default function Page() {
        if (polished.match(/^implement/i)) polished = polished.replace(/^implement(ed)?\s/i, 'Launched new ');
        if (polished.match(/^update/i)) polished = polished.replace(/^update(ed)?\s/i, 'Enhanced ');
     }
-
-    // D. Capitalize first letter
     return polished.charAt(0).toUpperCase() + polished.slice(1);
   }
 
-  // --- 2. HIERARCHICAL CATEGORIZATION ---
+  // --- CATEGORIZATION LOGIC ---
   function getCategory(item: ReleaseItem): SummaryCategory {
-    // Priority 1: Connectors (Revenue Drivers)
     if (item.connector) return 'Global Connectivity';
-
     const text = item.title.toLowerCase();
-
-    // Priority 2: Security & Governance (Risk & Compliance)
     const securityKeywords = ['auth', 'security', 'compliance', 'gdpr', 'pci', 'token', 'vault', 'locker', 'permission', 'role', 'policy', 'oidc', 'sso'];
     if (securityKeywords.some(k => text.includes(k))) return 'Security & Governance';
-
-    // Priority 3: Core Platform (Scale & Reliability)
     const coreKeywords = ['routing', 'infrastructure', 'latency', 'performance', 'database', 'optimization', 'api', 'webhook', 'event', 'monitoring', 'alert', 'rust', 'aws'];
     if (coreKeywords.some(k => text.includes(k))) return 'Core Platform & Reliability';
-
-    // Priority 4: Everything else is "Merchant Experience" (Product Features)
     return 'Merchant Experience';
   }
 
@@ -134,10 +115,8 @@ export default function Page() {
 
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
-      // Wednesday Logic
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
       const key = format(cycleDate, 'yyyy-MM-dd');
-
       if (!groups[key]) groups[key] = [];
       groups[key].push(item);
     });
@@ -163,7 +142,6 @@ export default function Page() {
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
 
-    // Special Layout for Connectors: Comma Separated for Cleanliness
     if (title === 'Global Connectivity') {
         const byConnector: Record<string, ReleaseItem[]> = {};
         items.forEach(item => {
@@ -196,7 +174,6 @@ export default function Page() {
         );
     }
 
-    // Standard Layout for other categories
     return (
       <div className="mb-6">
         <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-sky-400">
@@ -276,34 +253,81 @@ export default function Page() {
         {/* FILTERS */}
         <section className="mb-10">
           <div className="grid gap-4 md:grid-cols-[1fr_200px_auto] p-1">
-            {/* Connector */}
+            
+            {/* Connector Filter */}
             <div>
-              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Filter by Connector</label>
-              <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
-                <option value="All">All Connectors</option>
-                {connectors.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Filter by Connector
+              </label>
+              <div className="relative">
+                <select 
+                  value={connectorFilter} 
+                  onChange={(e) => setConnectorFilter(e.target.value)} 
+                  className="w-full appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all"
+                >
+                  <option value="All">All Connectors</option>
+                  {connectors.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                {/* Custom Arrow Icon */}
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                  <ChevronDown size={14} />
+                </div>
+              </div>
             </div>
 
-            {/* Type */}
+            {/* Type Filter */}
             <div>
-              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Type</label>
-              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as any)} className="w-full appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
-                <option value="All">All Types</option>
-                <option value="Feature">Features</option>
-                <option value="Bug Fix">Bug Fixes</option>
-              </select>
+              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Type
+              </label>
+              <div className="relative">
+                <select 
+                  value={typeFilter} 
+                  onChange={(e) => setTypeFilter(e.target.value as any)} 
+                  className="w-full appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all"
+                >
+                  <option value="All">All Types</option>
+                  <option value="Feature">Features</option>
+                  <option value="Bug Fix">Bug Fixes</option>
+                </select>
+                {/* Custom Arrow Icon */}
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                  <ChevronDown size={14} />
+                </div>
+              </div>
             </div>
 
             {/* Date Range */}
             <div className="flex gap-2">
               <div>
                 <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">From</label>
-                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-36 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500" />
+                <div className="relative">
+                  {/* [color-scheme:dark] forces the browser's calendar icon to be white */}
+                  <input 
+                    type="date" 
+                    value={fromDate} 
+                    onChange={(e) => setFromDate(e.target.value)} 
+                    className="w-36 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500 [color-scheme:dark]" 
+                  />
+                  {/* Overlay Custom Icon just in case */}
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                    <CalendarDays size={14} />
+                  </div>
+                </div>
               </div>
               <div>
                 <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">To</label>
-                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-36 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500" />
+                <div className="relative">
+                  <input 
+                    type="date" 
+                    value={toDate} 
+                    onChange={(e) => setToDate(e.target.value)} 
+                    className="w-36 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500 [color-scheme:dark]" 
+                  />
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                    <CalendarDays size={14} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -319,7 +343,6 @@ export default function Page() {
 
             return (
                 <div key={week.id} className="relative pl-8 md:pl-0">
-                    {/* Timeline Line */}
                     <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-slate-800 to-transparent md:hidden"></div>
                     
                     <div className="mb-6 flex items-baseline gap-4">
@@ -331,7 +354,6 @@ export default function Page() {
                 
                     <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6 md:p-8 hover:border-slate-700 transition-colors">
                         {viewMode === 'summary' ? (
-                            // EXECUTIVE VIEW
                             <div>
                                 {renderSummarySection('Global Connectivity', catConnectors)}
                                 <div className="grid md:grid-cols-2 gap-x-12 gap-y-6">
@@ -346,7 +368,6 @@ export default function Page() {
                                 {week.items.length === 0 && <p className="text-slate-500 text-sm italic">No updates in this cycle.</p>}
                             </div>
                         ) : (
-                            // DEV LIST VIEW
                             <ul className="space-y-4">
                                 {week.items.map((item, idx) => (
                                     <li key={idx} className="flex flex-col gap-1 md:flex-row md:items-start md:gap-3 text-sm">
