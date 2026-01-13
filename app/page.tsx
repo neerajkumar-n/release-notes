@@ -8,7 +8,7 @@ import {
   Sun,
   Sparkles,
   List,
-  FileText
+  Zap
 } from 'lucide-react';
 import { 
   parseISO, 
@@ -43,21 +43,21 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // --- VIEW STATE (Toggle) ---
+  // VIEW STATE
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
 
-  // --- AI STATE ---
+  // AI STATE
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [lastSummarizedRange, setLastSummarizedRange] = useState<string>('');
 
-  // Filters
+  // FILTERS
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- FETCH DATA ---
+  // 1. FETCH DATA
   async function fetchData() {
     setLoading(true);
     try {
@@ -75,47 +75,9 @@ export default function Page() {
     }
   }
 
-  // --- AI GENERATION ---
-  const generateAiSummary = useCallback(async (itemsToSummarize: ReleaseItem[]) => {
-    if (itemsToSummarize.length === 0) return;
-    setAiLoading(true);
-    setAiSummary(null);
-
-    let rangeStr = 'All Recent Updates';
-    if (fromDate && toDate) {
-        rangeStr = `${format(parseISO(fromDate), 'MMM d')} - ${format(parseISO(toDate), 'MMM d, yyyy')}`;
-    }
-
-    try {
-      const res = await fetch('/api/generate-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: itemsToSummarize, weekRange: rangeStr }),
-      });
-      const data = await res.json();
-      if (data.summary) {
-        setAiSummary(data.summary);
-        setLastSummarizedRange(rangeStr);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setAiLoading(false);
-    }
-  }, [fromDate, toDate]);
-
-  useEffect(() => { fetchData(); }, []);
-
-  const connectors = useMemo(() => {
-    const set = new Set<string>();
-    allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
-    return Array.from(set).sort();
-  }, [allItems]);
-
-  // --- FILTER & LOGIC ---
-  useEffect(() => {
-    // 1. Filter
-    const filteredItems = allItems.filter((item) => {
+  // 2. FILTER LOGIC
+  const filteredItems = useMemo(() => {
+    return allItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
       if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -123,8 +85,10 @@ export default function Page() {
       if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
       return true;
     });
+  }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-    // 2. Group for List View
+  // 3. GROUP LOGIC (For List View)
+  useEffect(() => {
     const groups: Record<string, ReleaseItem[]> = {};
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
@@ -148,23 +112,64 @@ export default function Page() {
         };
       });
     setGroupedWeeks(result);
+  }, [filteredItems]);
 
-    // 3. Auto-Trigger AI (Only in Summary Mode)
+  // 4. AI GENERATION FUNCTION
+  const generateAiSummary = useCallback(async () => {
+    if (filteredItems.length === 0) return;
+    setAiLoading(true);
+    setAiSummary(null);
+
+    let rangeStr = 'All Recent Updates';
+    if (fromDate && toDate) {
+        rangeStr = `${format(parseISO(fromDate), 'MMM d')} - ${format(parseISO(toDate), 'MMM d, yyyy')}`;
+    }
+
+    try {
+      const res = await fetch('/api/generate-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: filteredItems, weekRange: rangeStr }),
+      });
+      const data = await res.json();
+      if (data.summary) {
+        setAiSummary(data.summary);
+        setLastSummarizedRange(rangeStr);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [filteredItems, fromDate, toDate]);
+
+  // 5. AUTO-TRIGGER AI (Debounced)
+  useEffect(() => {
     const currentRange = fromDate && toDate ? `${fromDate}:${toDate}` : 'All';
     const hasActiveFilters = fromDate !== '' || toDate !== '' || connectorFilter !== 'All';
 
+    // Only auto-trigger if we have items AND filters AND we haven't summarized this exact range yet
     if (viewMode === 'summary' && hasActiveFilters && filteredItems.length > 0 && currentRange !== lastSummarizedRange && !loading) {
-       const timer = setTimeout(() => generateAiSummary(filteredItems), 800);
+       const timer = setTimeout(() => generateAiSummary(), 1000);
        return () => clearTimeout(timer);
     }
     
-    // Clear summary if filters are cleared
+    // Reset summary if user clears filters
     if (!hasActiveFilters && viewMode === 'summary') {
         setAiSummary(null);
         setLastSummarizedRange('');
     }
+  }, [filteredItems.length, connectorFilter, fromDate, toDate, loading, lastSummarizedRange, generateAiSummary, viewMode]);
 
-  }, [allItems, connectorFilter, typeFilter, fromDate, toDate, loading, lastSummarizedRange, generateAiSummary, viewMode]);
+  // Initial Load
+  useEffect(() => { fetchData(); }, []);
+
+  // Connectors Dropdown
+  const connectors = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
+    return Array.from(set).sort();
+  }, [allItems]);
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
@@ -257,24 +262,39 @@ export default function Page() {
                    </div>
                 )}
 
+                {/* The Result */}
                 {!aiLoading && aiSummary && (
                   <div className="relative rounded-2xl border border-slate-800 bg-slate-900/40 p-10 shadow-2xl">
                     <div 
-                      className="text-slate-300 leading-relaxed space-y-4"
+                      className="text-slate-300 leading-relaxed"
                       dangerouslySetInnerHTML={{ __html: aiSummary }} 
                     />
                   </div>
                 )}
 
+                {/* Empty / Error States */}
                 {!aiLoading && !aiSummary && (
-                   <div className="flex flex-col items-center justify-center py-24 border border-dashed border-slate-800 rounded-2xl opacity-50">
-                     <p className="text-slate-400">Select a date range to generate a summary.</p>
+                   <div className="flex flex-col items-center justify-center py-24 border border-dashed border-slate-800 rounded-2xl bg-slate-900/20">
+                     
+                     {filteredItems.length === 0 ? (
+                        <p className="text-slate-400">No PRs found in this date range.</p>
+                     ) : (
+                        <div className="text-center">
+                            <p className="text-slate-400 mb-4">Ready to summarize {filteredItems.length} updates.</p>
+                            <button 
+                                onClick={generateAiSummary}
+                                className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-purple-600 text-white font-bold hover:bg-purple-500 transition-all shadow-lg shadow-purple-900/40"
+                            >
+                                <Sparkles size={16} /> GENERATE SUMMARY
+                            </button>
+                        </div>
+                     )}
                    </div>
                 )}
               </>
             )}
 
-            {/* VIEW 2: LIST MODE (Raw PRs) */}
+            {/* VIEW 2: LIST MODE */}
             {viewMode === 'list' && (
               <div className="space-y-6">
                 {groupedWeeks.map((week) => (
