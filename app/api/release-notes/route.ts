@@ -8,7 +8,7 @@ type ReleaseItem = {
   connector: string | null;
   prNumber?: string;
   prUrl?: string;
-  originalDate: string; // We keep the specific date (e.g. Monday) for sorting
+  originalDate: string; 
 };
 
 type ReleaseWeek = {
@@ -18,28 +18,22 @@ type ReleaseWeek = {
   items: ReleaseItem[];
 };
 
-// 1. Clean up the text (remove markdown links, bolding, etc.)
+// Clean up markdown noise
 function cleanTitle(raw: string): string {
   let text = raw;
-  // Remove PR links
-  text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, '');
-  text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, '');
-  text = text.replace(/\(\s*\)/g, '');
-  // Remove bold markers
-  text = text.replace(/\*\*/g, '');
-  // Remove [ConnectorName] tags
-  text = text.replace(/\[[^\]]+\]/g, '');
-  // Remove backticks
-  text = text.replace(/`/g, '');
-  // Fix spacing
-  text = text.replace(/\s{2,}/g, ' ');
+  text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, ''); // Remove PR links
+  text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, ''); // Remove other links
+  text = text.replace(/\(\s*\)/g, ''); // Empty parens
+  text = text.replace(/\*\*/g, ''); // Bold markers
+  text = text.replace(/\[[^\]]+\]/g, ''); // [Connector] tags
+  text = text.replace(/`/g, ''); // Backticks
+  text = text.replace(/\s{2,}/g, ' '); // Extra spaces
   text = text.trim();
-  // Remove trailing punctuation
-  text = text.replace(/[-–:,;.\s]+$/, '');
+  text = text.replace(/[-–:,;.\s]+$/, ''); // Trailing punctuation
   return text;
 }
 
-// 2. Normalize Connector Names (e.g. "ADYEN" -> "Adyen")
+// Normalize "Adyen", "ADYEN", "adyen" -> "Adyen"
 function normalizeConnector(raw: string): string {
   if (!raw) return '';
   return raw
@@ -64,7 +58,7 @@ export async function GET() {
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Detect Version Headers like: ## [2026.01.05.0]
+      // Version Header: ## [2026.01.05.0]
       const versionMatch = trimmed.match(
         /^##\s*\[?(\d{4})\.(\d{1,2})\.(\d{1,2})\.\d{1,2}\]?/
       );
@@ -82,25 +76,24 @@ export async function GET() {
         continue;
       }
 
-      // Detect Bullet Points
+      // Items
       if (trimmed.startsWith('-') && currentWeek) {
         const content = trimmed.substring(1).trim();
         if (!content) continue;
 
         const lower = content.toLowerCase();
         
-        // IMPROVED: Better detection for Bug Fixes vs Features
+        // Smart Type Detection
         const type: 'Feature' | 'Bug Fix' = 
-          lower.includes('fix') || lower.includes('bug') 
+          lower.includes('fix') || lower.includes('bug') || lower.includes('resolves')
           ? 'Bug Fix' 
           : 'Feature';
 
-        // Extract Connector Name: [Stripe]
+        // Connector Extraction
         const connectorMatch = content.match(/\[([a-zA-Z0-9_\s]+)\]/);
         const rawConnector = connectorMatch ? connectorMatch[1].trim() : null;
         const connector = rawConnector ? normalizeConnector(rawConnector) : null;
 
-        // Extract PR Number and URL
         const prMatch = content.match(/\[#(\d+)\]\((https:\/\/github\.com\/[^\)]+)\)/);
         const prNumber = prMatch?.[1];
         const prUrl = prMatch?.[2];
@@ -114,7 +107,7 @@ export async function GET() {
           connector,
           prNumber,
           prUrl,
-          originalDate: currentWeek.date, // Pass the date down so we can regroup it later
+          originalDate: currentWeek.date,
         });
       }
     }
