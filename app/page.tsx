@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, CalendarDays } from 'lucide-react';
+import { RefreshCw, CalendarDays, LayoutList, FileText } from 'lucide-react';
 import { 
   parseISO, 
   isBefore, 
@@ -20,20 +20,24 @@ type ReleaseItem = {
   connector: string | null;
   prNumber?: string;
   prUrl?: string;
-  originalDate: string; // ISO String from backend
+  originalDate: string; 
 };
 
 type ReleaseGroup = {
   id: string;
-  date: string;     // The "Wednesday" date
-  headline: string; // e.g. "Week of Jan 1 - Jan 7"
+  date: string;     
+  headline: string; 
   items: ReleaseItem[];
 };
+
+// --- CATEGORIES FOR EXECUTIVE SUMMARY ---
+type SummaryCategory = 'Connectors' | 'Customer & Access' | 'Routing & Core' | 'Other';
 
 export default function Page() {
   const [allItems, setAllItems] = useState<ReleaseItem[]>([]);
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
   const [loading, setLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'summary'>('summary'); // Default to Summary
 
   // --- FILTERS STATE ---
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
@@ -47,9 +51,6 @@ export default function Page() {
     try {
       const res = await fetch('/api/release-notes');
       const weeksData = await res.json();
-      
-      // Flatten all weeks into a single list of items
-      // This allows us to re-bucket them into our own Wednesday cycles
       const flatItems: ReleaseItem[] = [];
       weeksData.forEach((week: any) => {
         week.items.forEach((item: ReleaseItem) => {
@@ -68,7 +69,6 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- EXTRACT CONNECTORS FOR DROPDOWN ---
   const connectors = useMemo(() => {
     const set = new Set<string>();
     allItems.forEach((item) => {
@@ -77,19 +77,31 @@ export default function Page() {
     return Array.from(set).sort();
   }, [allItems]);
 
-  // --- MAIN LOGIC: FILTER & GROUP ---
+  // --- HELPER: CATEGORIZE ITEM ---
+  function getCategory(item: ReleaseItem): SummaryCategory {
+    // 1. If it has a connector, it goes to Connectors
+    if (item.connector) return 'Connectors';
+
+    const text = item.title.toLowerCase();
+
+    // 2. Customer & Access Keywords
+    const customerKeywords = ['auth', 'user', 'role', 'permission', 'locker', 'payout', 'merchant', 'dashboard', 'oidc', 'login', 'signup', 'invite', 'api key', 'jwt'];
+    if (customerKeywords.some(k => text.includes(k))) return 'Customer & Access';
+
+    // 3. Routing & Core Keywords
+    const coreKeywords = ['routing', 'router', 'gsm', 'tunnel', 'infra', 'database', 'db', 'rust', 'wasm', 'kafka', 'redis', 'webhook', 'analytics', 'monitoring', 'alert', 'scheduler', 'batch'];
+    if (coreKeywords.some(k => text.includes(k))) return 'Routing & Core';
+
+    // 4. Fallback
+    return 'Other';
+  }
+
+  // --- MAIN LOGIC ---
   useEffect(() => {
-    // 1. First, apply filters to the raw list of items
     const filteredItems = allItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
-
-      // Connector Filter
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
-      
-      // Type Filter
       if (typeFilter !== 'All' && item.type !== typeFilter) return false;
-
-      // Date Range Filter (Inclusive)
       if (fromDate) {
         const start = startOfDay(parseISO(fromDate));
         if (isBefore(itemDate, start)) return false;
@@ -98,40 +110,26 @@ export default function Page() {
         const end = endOfDay(parseISO(toDate));
         if (isAfter(itemDate, end)) return false;
       }
-
       return true;
     });
 
-    // 2. Group items by their "Next Wednesday"
-    // If a release was on Monday Jan 1st, it belongs to the cycle ending Wednesday Jan 3rd.
     const groups: Record<string, ReleaseItem[]> = {};
 
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
-      
-      // Logic: If today is Wed, count it. If not, find the upcoming Wed.
-      const cycleDate = isWednesday(releaseDate) 
-        ? releaseDate 
-        : nextWednesday(releaseDate);
-      
-      const key = format(cycleDate, 'yyyy-MM-dd'); // e.g. "2026-01-07"
+      const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
+      const key = format(cycleDate, 'yyyy-MM-dd');
 
-      if (!groups[key]) {
-        groups[key] = [];
-      }
+      if (!groups[key]) groups[key] = [];
       groups[key].push(item);
     });
 
-    // 3. Convert the Groups Object into an Array and Sort (Newest first)
     const result: ReleaseGroup[] = Object.keys(groups)
       .sort((a, b) => b.localeCompare(a)) 
       .map((dateKey) => {
         const dateObj = parseISO(dateKey);
-        
-        // Calculate "Previous Thursday" just for the display headline
         const prevThurs = new Date(dateObj);
         prevThurs.setDate(dateObj.getDate() - 6);
-
         return {
           id: dateKey,
           date: dateKey,
@@ -143,180 +141,210 @@ export default function Page() {
     setGroupedWeeks(result);
   }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // --- RENDER ---
+  // --- RENDER HELPERS FOR SUMMARY VIEW ---
+  const renderSummarySection = (title: string, items: ReleaseItem[]) => {
+    if (items.length === 0) return null;
+
+    // If section is "Connectors", group by Connector Name
+    if (title === 'Connector expansions and enhancements') {
+        const byConnector: Record<string, ReleaseItem[]> = {};
+        items.forEach(item => {
+            const name = item.connector || 'Other';
+            if (!byConnector[name]) byConnector[name] = [];
+            byConnector[name].push(item);
+        });
+
+        return (
+            <div className="mb-6 last:mb-0">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
+                    {title}
+                </h3>
+                <ul className="space-y-3">
+                    {Object.entries(byConnector).sort().map(([name, connectorItems]) => (
+                        <li key={name} className="text-sm text-slate-300">
+                            <span className="font-bold text-slate-100">{name}: </span>
+                            {connectorItems.map((c, i) => (
+                                <span key={i}>
+                                    {c.title}
+                                    {c.prNumber && (
+                                        <a href={c.prUrl} target="_blank" className="ml-1 text-xs text-slate-500 hover:text-sky-400 no-underline">
+                                            [#{c.prNumber}]
+                                        </a>
+                                    )}
+                                    {i < connectorItems.length - 1 ? '; ' : ''}
+                                </span>
+                            ))}
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        );
+    }
+
+    // Standard Render for other sections
+    return (
+      <div className="mb-6 last:mb-0">
+        <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
+            {title}
+        </h3>
+        <ul className="space-y-2">
+          {items.map((item, idx) => (
+            <li key={idx} className="text-sm text-slate-300 leading-relaxed">
+              <span className="text-slate-100 font-medium">{item.title}</span>
+              {item.prNumber && (
+                <a href={item.prUrl} target="_blank" className="ml-2 text-xs text-slate-500 hover:text-sky-400">
+                    [#{item.prNumber}]
+                </a>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 font-sans">
-      <main className="mx-auto max-w-6xl px-4 pb-16 pt-10">
+      <main className="mx-auto max-w-5xl px-4 pb-16 pt-10">
         
-        {/* HERO SECTION */}
-        <section className="mb-8">
-          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-sky-400">
-            Release Notes
-          </p>
-          <h1 className="mb-4 text-3xl font-bold tracking-tight text-white md:text-4xl">
-            Hyperswitch Weekly Updates
-          </h1>
-          <p className="max-w-2xl text-sm text-slate-400 leading-relaxed">
-            A single view of what changed in Hyperswitch. 
-            Releases are automatically grouped into 
-            <span className="text-slate-200 font-medium"> Wednesday Cycles</span>.
-          </p>
+        {/* HEADER */}
+        <section className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-widest text-sky-400">
+                    Release Notes
+                </p>
+                <h1 className="mb-3 text-3xl font-bold tracking-tight text-white">
+                    Hyperswitch Weekly
+                </h1>
+                <p className="max-w-xl text-sm text-slate-400">
+                    {viewMode === 'summary' 
+                        ? "Executive summary grouped by business domain (Wednesday cycles)."
+                        : "Detailed list of all changelog items (Wednesday cycles)."
+                    }
+                </p>
+            </div>
+            
+            <div className="flex items-center gap-3">
+                 {/* VIEW TOGGLE */}
+                <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800">
+                    <button 
+                        onClick={() => setViewMode('summary')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === 'summary' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        <FileText size={14} /> Summary
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('list')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === 'list' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        <LayoutList size={14} /> List
+                    </button>
+                </div>
 
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/50 px-4 py-1.5 text-xs font-medium text-slate-300 transition hover:border-sky-500 hover:text-sky-400 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Fetching...' : 'Refresh Data'}
-          </button>
+                <button
+                    onClick={fetchData}
+                    disabled={loading}
+                    className="flex items-center justify-center h-9 w-9 rounded-full border border-slate-700 bg-slate-900/50 text-slate-400 hover:border-sky-500 hover:text-sky-400"
+                >
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+            </div>
         </section>
 
-        {/* FILTERS BAR */}
+        {/* FILTERS */}
         <section className="mb-8 rounded-xl border border-slate-800 bg-slate-900/40 p-5 backdrop-blur-sm">
           <div className="grid gap-5 md:grid-cols-[1fr_200px_auto]">
-            
-            {/* Connector Filter */}
+            {/* Connector */}
             <div>
-              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                Connector
-              </label>
+              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Connector</label>
               <div className="relative">
-                <select
-                  value={connectorFilter}
-                  onChange={(e) => setConnectorFilter(e.target.value)}
-                  className="w-full appearance-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                >
+                <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:outline-none">
                   <option value="All">All Connectors</option>
-                  {connectors.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
+                  {connectors.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
-                {/* Arrow Icon */}
-                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
               </div>
             </div>
 
-            {/* Type Filter */}
+            {/* Type */}
             <div>
-              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                Type
-              </label>
+              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Type</label>
               <div className="relative">
-                <select
-                  value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value as any)}
-                  className="w-full appearance-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                >
+                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as any)} className="w-full appearance-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 focus:border-sky-500 focus:outline-none">
                   <option value="All">All Types</option>
                   <option value="Feature">Features</option>
                   <option value="Bug Fix">Bug Fixes</option>
                 </select>
-                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
               </div>
             </div>
 
-            {/* Date Range Inputs */}
+            {/* Date Range */}
             <div className="flex gap-2">
               <div>
-                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  From
-                </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
-                    className="w-36 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  />
-                  <CalendarDays className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                </div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">From</label>
+                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-36 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500" />
               </div>
               <div>
-                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  To
-                </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={toDate}
-                    onChange={(e) => setToDate(e.target.value)}
-                    className="w-36 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  />
-                  <CalendarDays className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                </div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">To</label>
+                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-36 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500" />
               </div>
             </div>
           </div>
         </section>
 
-        {/* RESULTS LIST */}
-        <section className="space-y-6">
-          {groupedWeeks.map((week) => (
-            <div
-              key={week.id}
-              className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/30 shadow-sm transition hover:border-slate-700"
-            >
-              <div className="border-b border-slate-800 bg-slate-900/50 px-5 py-3 flex justify-between items-center">
-                <h2 className="text-base font-semibold text-slate-100">
-                  {week.headline}
-                </h2>
-                <span className="text-xs font-mono text-slate-500">Week ending {week.date}</span>
-              </div>
-              
-              <ul className="divide-y divide-slate-800/50 px-5">
-                {week.items.map((item, idx) => (
-                  <li key={idx} className="py-4">
-                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:gap-4">
-                      
-                      {/* Badge */}
-                      <span
-                        className={`mt-0.5 inline-flex h-fit w-fit flex-shrink-0 items-center rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                          item.type === 'Feature'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        }`}
-                      >
-                        {item.type === 'Feature' ? 'Feat' : 'Fix'}
-                      </span>
+        {/* CONTENT */}
+        <section className="space-y-8">
+          {groupedWeeks.map((week) => {
+            // Categorize items for Summary Mode
+            const catConnectors = week.items.filter(i => getCategory(i) === 'Connectors');
+            const catCustomer = week.items.filter(i => getCategory(i) === 'Customer & Access');
+            const catCore = week.items.filter(i => getCategory(i) === 'Routing & Core');
+            const catOther = week.items.filter(i => getCategory(i) === 'Other');
 
-                      <div className="flex-1 space-y-1.5">
-                        <p className="text-sm leading-relaxed text-slate-300">
-                          {item.connector && (
-                            <span className="mr-2 inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">
-                              {item.connector}
-                            </span>
-                          )}
-                          {item.title}
-                        </p>
-                        
-                        {item.prNumber && item.prUrl && (
-                          <a
-                            href={item.prUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-sky-400"
-                          >
-                            <span>PR #{item.prNumber}</span>
-                            <span className="opacity-0 transition-opacity group-hover:opacity-100">↗</span>
-                          </a>
-                        )}
-                      </div>
+            return (
+                <div key={week.id} className="rounded-xl border border-slate-800 bg-slate-900/20 overflow-hidden">
+                    <div className="border-b border-slate-800 bg-slate-900/50 px-6 py-4 flex justify-between items-center">
+                        <h2 className="text-lg font-semibold text-slate-100">{week.headline}</h2>
+                        <span className="text-xs font-mono text-slate-500">{week.date}</span>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+                
+                    <div className="p-6">
+                        {viewMode === 'summary' ? (
+                            // EXECUTIVE SUMMARY VIEW
+                            <div>
+                                {renderSummarySection('Connector expansions and enhancements', catConnectors)}
+                                {renderSummarySection('Customer and access management', catCustomer)}
+                                {renderSummarySection('Routing and core improvements', catCore)}
+                                {renderSummarySection('General Improvements', catOther)}
+                                
+                                {week.items.length === 0 && <p className="text-slate-500 text-sm">No items in this range.</p>}
+                            </div>
+                        ) : (
+                            // DETAILED LIST VIEW (Original)
+                            <ul className="space-y-4">
+                                {week.items.map((item, idx) => (
+                                    <li key={idx} className="flex flex-col gap-1 md:flex-row md:items-start md:gap-3 text-sm">
+                                         <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                            {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                        </span>
+                                        <div className="flex-1">
+                                            <p className="text-slate-300">
+                                                {item.connector && <strong className="text-slate-100 mr-1">{item.connector}:</strong>}
+                                                {item.title}
+                                            </p>
+                                            {item.prNumber && <a href={item.prUrl} target="_blank" className="text-xs text-slate-500 hover:text-sky-400">PR #{item.prNumber}</a>}
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+            );
+          })}
 
           {groupedWeeks.length === 0 && !loading && (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 py-16 text-center">
-              <p className="text-slate-400">No release notes found.</p>
-              <p className="text-xs text-slate-600 mt-1">Try adjusting your filters.</p>
+            <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+              <p className="text-slate-400">No data found for this period.</p>
             </div>
           )}
         </section>
