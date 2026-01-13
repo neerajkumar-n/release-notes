@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { 
   RefreshCw, 
+  CalendarDays, 
   ChevronDown, 
   Moon, 
   Sun,
   Sparkles,
-  List,
   Zap
 } from 'lucide-react';
 import { 
@@ -21,6 +21,7 @@ import {
   endOfDay
 } from 'date-fns';
 
+// --- TYPES ---
 type ReleaseItem = {
   title: string;
   type: 'Feature' | 'Bug Fix';
@@ -41,33 +42,35 @@ export default function Page() {
   const [allItems, setAllItems] = useState<ReleaseItem[]>([]);
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Default to Dark Mode (matches your screenshot)
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // VIEW STATE
-  const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
-
-  // AI STATE
+  // --- AI STATE ---
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [lastSummarizedRange, setLastSummarizedRange] = useState<string>('');
 
-  // FILTERS
+  // Filters (Dates start EMPTY now)
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // 1. FETCH DATA
+  // --- 1. FETCH DATA ---
   async function fetchData() {
     setLoading(true);
     try {
       const res = await fetch('/api/release-notes');
       const weeksData = await res.json();
+      
       const flatItems: ReleaseItem[] = [];
       weeksData.forEach((week: any) => {
         week.items.forEach((item: ReleaseItem) => flatItems.push(item));
       });
+
       setAllItems(flatItems);
+      // NOTE: Removed the auto-date selection logic here.
     } catch (e) {
       console.error(e);
     } finally {
@@ -75,9 +78,52 @@ export default function Page() {
     }
   }
 
-  // 2. FILTER LOGIC
-  const filteredItems = useMemo(() => {
-    return allItems.filter((item) => {
+  // --- 2. AI GENERATION ---
+  const generateAiSummary = useCallback(async (itemsToSummarize: ReleaseItem[]) => {
+    if (itemsToSummarize.length === 0) return;
+
+    setAiLoading(true);
+    setAiSummary(null);
+
+    // Format date nicely for the report header
+    let rangeStr = 'All Recent Updates';
+    if (fromDate && toDate) {
+        rangeStr = `${format(parseISO(fromDate), 'MMM d')} - ${format(parseISO(toDate), 'MMM d, yyyy')}`;
+    }
+
+    try {
+      const res = await fetch('/api/generate-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: itemsToSummarize, weekRange: rangeStr }),
+      });
+      
+      const data = await res.json();
+      if (data.summary) {
+        setAiSummary(data.summary);
+        setLastSummarizedRange(rangeStr);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [fromDate, toDate]);
+
+  // Initial Fetch
+  useEffect(() => { fetchData(); }, []);
+
+  // Compute Connectors
+  const connectors = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
+    return Array.from(set).sort();
+  }, [allItems]);
+
+  // --- 3. FILTER & AUTO-TRIGGER ---
+  useEffect(() => {
+    // A. Filter Items
+    const filteredItems = allItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
       if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -85,10 +131,8 @@ export default function Page() {
       if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
       return true;
     });
-  }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // 3. GROUP LOGIC (For List View)
-  useEffect(() => {
+    // B. Group by Wednesday (For the list view)
     const groups: Record<string, ReleaseItem[]> = {};
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
@@ -111,110 +155,62 @@ export default function Page() {
           items: groups[dateKey],
         };
       });
+
     setGroupedWeeks(result);
-  }, [filteredItems]);
 
-  // 4. AI GENERATION FUNCTION
-  const generateAiSummary = useCallback(async () => {
-    if (filteredItems.length === 0) return;
-    setAiLoading(true);
-    setAiSummary(null);
-
-    let rangeStr = 'All Recent Updates';
-    if (fromDate && toDate) {
-        rangeStr = `${format(parseISO(fromDate), 'MMM d')} - ${format(parseISO(toDate), 'MMM d, yyyy')}`;
-    }
-
-    try {
-      const res = await fetch('/api/generate-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: filteredItems, weekRange: rangeStr }),
-      });
-      const data = await res.json();
-      if (data.summary) {
-        setAiSummary(data.summary);
-        setLastSummarizedRange(rangeStr);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setAiLoading(false);
-    }
-  }, [filteredItems, fromDate, toDate]);
-
-  // 5. AUTO-TRIGGER AI (Debounced)
-  useEffect(() => {
+    // C. AUTO-TRIGGER AI (Only if we have dates selected or specific filters)
+    // This prevents it from running on empty "All Time" views which might be too huge
     const currentRange = fromDate && toDate ? `${fromDate}:${toDate}` : 'All';
     const hasActiveFilters = fromDate !== '' || toDate !== '' || connectorFilter !== 'All';
 
-    // Only auto-trigger if we have items AND filters AND we haven't summarized this exact range yet
-    if (viewMode === 'summary' && hasActiveFilters && filteredItems.length > 0 && currentRange !== lastSummarizedRange && !loading) {
-       const timer = setTimeout(() => generateAiSummary(), 1000);
+    if (hasActiveFilters && filteredItems.length > 0 && currentRange !== lastSummarizedRange && !loading) {
+       const timer = setTimeout(() => {
+         generateAiSummary(filteredItems);
+       }, 800); // Slight delay to wait for user to finish typing date
        return () => clearTimeout(timer);
     }
-    
-    // Reset summary if user clears filters
-    if (!hasActiveFilters && viewMode === 'summary') {
+    // If no filters, clear the summary so we don't show old data
+    if (!hasActiveFilters) {
         setAiSummary(null);
         setLastSummarizedRange('');
     }
-  }, [filteredItems.length, connectorFilter, fromDate, toDate, loading, lastSummarizedRange, generateAiSummary, viewMode]);
 
-  // Initial Load
-  useEffect(() => { fetchData(); }, []);
+  }, [allItems, connectorFilter, typeFilter, fromDate, toDate, loading, lastSummarizedRange, generateAiSummary]);
 
-  // Connectors Dropdown
-  const connectors = useMemo(() => {
-    const set = new Set<string>();
-    allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
-    return Array.from(set).sort();
-  }, [allItems]);
 
+  // --- RENDER ---
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div className="min-h-screen bg-slate-950 text-slate-50 font-sans selection:bg-purple-500/30">
+        
         <main className="mx-auto max-w-6xl px-4 pb-16 pt-10">
           
           {/* HEADER */}
-          <section className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-800 pb-6">
+          <section className="mb-8 flex items-center justify-between border-b border-slate-800 pb-6">
               <div>
                   <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
                       Hyperswitch Release Notes
                   </h1>
                   <p className="text-sm text-slate-400">
-                      Weekly updates tracked from GitHub Changelog.
+                      Automated weekly summaries generated by AI.
                   </p>
               </div>
               
-              <div className="flex items-center gap-4">
-                  {/* VIEW TOGGLE */}
-                  <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700">
-                      <button 
-                          onClick={() => setViewMode('summary')}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-md text-xs font-bold transition-all ${viewMode === 'summary' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'text-slate-400 hover:text-white'}`}
-                      >
-                          <Sparkles size={14} /> SUMMARY
-                      </button>
-                      <button 
-                          onClick={() => setViewMode('list')}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-md text-xs font-bold transition-all ${viewMode === 'list' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
-                      >
-                          <List size={14} /> LIST VIEW
-                      </button>
-                  </div>
-
-                  <div className="h-6 w-px bg-slate-800 mx-1"></div>
-
+              <div className="flex gap-2">
                   <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-full border border-slate-700 bg-slate-900 text-slate-400 hover:text-white transition-all">
                     {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+                  </button>
+                  <button onClick={() => { fetchData(); setAiSummary(null); }} className="p-2 rounded-full border border-slate-700 bg-slate-900 text-slate-400 hover:text-white transition-all">
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                   </button>
               </div>
           </section>
 
-          {/* FILTERS */}
+          {/* FILTERS BAR */}
           <section className="mb-8 p-4 rounded-xl border border-slate-800 bg-slate-900/50">
             <div className="grid gap-4 md:grid-cols-[1fr_200px_auto]">
+              
+              {/* Connector */}
               <div>
                 <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">FILTER BY CONNECTOR</label>
                 <div className="relative">
@@ -225,6 +221,8 @@ export default function Page() {
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={16} /></div>
                 </div>
               </div>
+
+              {/* Type */}
               <div>
                 <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">TYPE</label>
                 <div className="relative">
@@ -236,14 +234,30 @@ export default function Page() {
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={16} /></div>
                 </div>
               </div>
+
+              {/* Dates */}
               <div className="flex gap-2">
                 <div>
                   <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">FROM</label>
-                  <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-200 outline-none focus:border-purple-500 [color-scheme:dark]" />
+                  <div className="relative">
+                    <input 
+                        type="date" 
+                        value={fromDate} 
+                        onChange={(e) => setFromDate(e.target.value)} 
+                        className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-200 outline-none focus:border-purple-500 [color-scheme:dark]" 
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">TO</label>
-                  <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-200 outline-none focus:border-purple-500 [color-scheme:dark]" />
+                  <div className="relative">
+                    <input 
+                        type="date" 
+                        value={toDate} 
+                        onChange={(e) => setToDate(e.target.value)} 
+                        className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-200 outline-none focus:border-purple-500 [color-scheme:dark]" 
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -252,77 +266,36 @@ export default function Page() {
           {/* --- CONTENT AREA --- */}
           <section className="min-h-[400px]">
             
-            {/* VIEW 1: SUMMARY MODE */}
-            {viewMode === 'summary' && (
-              <>
-                {(aiLoading) && (
-                   <div className="flex flex-col items-center justify-center py-24 gap-4 text-slate-500">
-                      <Sparkles size={40} className="text-purple-500 animate-pulse" />
-                      <p className="text-sm font-medium tracking-wide">GENERATING SUMMARY...</p>
-                   </div>
-                )}
-
-                {/* The Result */}
-                {!aiLoading && aiSummary && (
-                  <div className="relative rounded-2xl border border-slate-800 bg-slate-900/40 p-10 shadow-2xl">
-                    <div 
-                      className="text-slate-300 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: aiSummary }} 
-                    />
-                  </div>
-                )}
-
-                {/* Empty / Error States */}
-                {!aiLoading && !aiSummary && (
-                   <div className="flex flex-col items-center justify-center py-24 border border-dashed border-slate-800 rounded-2xl bg-slate-900/20">
-                     
-                     {filteredItems.length === 0 ? (
-                        <p className="text-slate-400">No PRs found in this date range.</p>
-                     ) : (
-                        <div className="text-center">
-                            <p className="text-slate-400 mb-4">Ready to summarize {filteredItems.length} updates.</p>
-                            <button 
-                                onClick={generateAiSummary}
-                                className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-purple-600 text-white font-bold hover:bg-purple-500 transition-all shadow-lg shadow-purple-900/40"
-                            >
-                                <Sparkles size={16} /> GENERATE SUMMARY
-                            </button>
-                        </div>
-                     )}
-                   </div>
-                )}
-              </>
+            {/* LOADING STATE */}
+            {(aiLoading) && (
+               <div className="flex flex-col items-center justify-center py-24 gap-4 text-slate-500">
+                  <Sparkles size={40} className="text-purple-500 animate-pulse" />
+                  <p className="text-sm font-medium tracking-wide">GENERATING SUMMARY...</p>
+               </div>
             )}
 
-            {/* VIEW 2: LIST MODE */}
-            {viewMode === 'list' && (
-              <div className="space-y-6">
-                {groupedWeeks.map((week) => (
-                    <div key={week.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-                        <div className="mb-4 flex items-baseline justify-between border-b border-slate-800 pb-3">
-                            <h2 className="text-lg font-semibold text-white">{week.headline}</h2>
-                            <span className="text-xs font-mono text-slate-500">{week.date}</span>
-                        </div>
-                        <ul className="space-y-3">
-                            {week.items.map((item, idx) => (
-                                <li key={idx} className="flex gap-3 text-sm">
-                                    <span className={`mt-0.5 h-fit rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                                        {item.type === 'Feature' ? 'FEAT' : 'FIX'}
-                                    </span>
-                                    <div className="flex-1 text-slate-300">
-                                        {item.connector && <strong className="text-white mr-1">{item.connector}:</strong>}
-                                        {item.title}
-                                        {item.prNumber && <a href={item.prUrl} target="_blank" className="ml-2 text-xs text-slate-500 hover:text-sky-400">#{item.prNumber}</a>}
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                ))}
-                {groupedWeeks.length === 0 && (
-                   <div className="text-center py-20 text-slate-500">No items found for this filter.</div>
-                )}
+            {/* AI SUMMARY DISPLAY */}
+            {!aiLoading && aiSummary && (
+              <div className="relative rounded-2xl border border-slate-800 bg-slate-900/40 p-10 shadow-2xl">
+                <div className="absolute top-6 right-6 opacity-20">
+                   <Sparkles size={80} className="text-purple-500" />
+                </div>
+                
+                {/* We render the AI HTML here. 
+                    NOTE: We removed 'prose' and assume the backend sends classes (text-xl, etc.) 
+                */}
+                <div 
+                  className="text-slate-300 leading-relaxed space-y-4"
+                  dangerouslySetInnerHTML={{ __html: aiSummary }} 
+                />
               </div>
+            )}
+
+            {/* EMPTY STATE */}
+            {!aiLoading && !aiSummary && (
+               <div className="flex flex-col items-center justify-center py-24 border border-dashed border-slate-800 rounded-2xl opacity-50">
+                 <p className="text-slate-400">Select a date range to generate a summary.</p>
+               </div>
             )}
           </section>
         </main>
