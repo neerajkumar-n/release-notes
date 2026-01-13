@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Initialize Google AI
-const genai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY });
+// Initialize Google AI with the standard library
+const genai = new GoogleGenerativeAI(process.env.GOOGLE_GENAI_API_KEY || '');
 
 export async function POST(req: Request) {
   try {
@@ -12,43 +12,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ summary: "No items to summarize." });
     }
 
-    // NEW: A much stricter prompt to match your sample style exactly
     const prompt = `
-      You are a Product Manager at Hyperswitch. Write a weekly release summary based on these PRs.
+      You are a Product Manager at Hyperswitch. Write a weekly release summary.
       
-      **Target Audience:** C-Level Executives (Focus on business value, not just code).
+      **Target Audience:** C-Level Executives.
       **Date Range:** ${weekRange}
 
       **STRICT OUTPUT FORMAT (HTML ONLY):**
       
-      1. **Header:** Start with <h2 class="text-xl font-bold mb-4 text-white">Weekly Report (${weekRange})</h2>
+      1. **Header:** <h2 class="text-2xl font-bold mb-6 text-white border-b border-slate-700 pb-2">Weekly Report (${weekRange})</h2>
       
-      2. **Highlights Section:** Pick the top 3-5 most impactful changes. Format them as:
-         <h3 class="text-lg font-semibold text-purple-400 mt-6 mb-2">Highlights</h3>
+      2. **Highlights:** Pick the top 3 impactful changes.
+         <h3 class="text-lg font-semibold text-purple-400 mt-6 mb-3 uppercase tracking-wider">Highlights</h3>
          <ul class="list-disc pl-5 space-y-2 text-slate-300">
-            <li><strong>Title:</strong> Description of value.</li>
+            <li><strong>Title:</strong> Description.</li>
          </ul>
 
-      3. **Categorized Updates:** Group the rest under these exact headers:
-         - "Connector expansions and enhancements"
-         - "Customer and access management"
-         - "Routing and core improvements"
-         
-         Format these sections as:
-         <h3 class="text-lg font-semibold text-sky-400 mt-6 mb-2">Category Name</h3>
+      3. **Categories:** Group the rest under: "Connector expansions", "Customer access", "Core improvements".
+         <h3 class="text-lg font-semibold text-sky-400 mt-6 mb-3 uppercase tracking-wider">Category Name</h3>
          <ul class="list-disc pl-5 space-y-2 text-slate-300">
             <li>
-               <strong>Feature Name:</strong> The update description. 
-               <span class="text-slate-500 text-xs ml-1">
-                 [<a href="PR_URL" target="_blank" class="hover:text-sky-400 underline">#PR_NUMBER</a>]
+               <strong>Feature:</strong> Description. 
+               <span class="text-slate-500 text-xs ml-1 whitespace-nowrap">
+                 [<a href="PR_URL" target="_blank" class="hover:text-sky-400 underline decoration-slate-700">#PR_NUMBER</a>]
                </span>
             </li>
          </ul>
 
       **Rules:**
-      - Do NOT use markdown (no \`\`\` or **). Use real HTML tags.
-      - Combine related PRs into one bullet point.
-      - Keep descriptions concise but impactful.
+      - Return ONLY HTML. No markdown backticks.
+      - Combine related PRs.
 
       **Input Data:**
       ${JSON.stringify(items.map((i: any) => ({
@@ -58,13 +51,10 @@ export async function POST(req: Request) {
       })))}
     `;
 
-    const response = await genai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    });
-
-    const summary = response.response.text();
-    // Clean up markdown if the AI adds it despite instructions
+    const model = genai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const summary = result.response.text();
+    
     const cleanSummary = summary.replace(/```html/g, '').replace(/```/g, '');
 
     return NextResponse.json({ summary: cleanSummary });
