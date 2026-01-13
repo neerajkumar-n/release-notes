@@ -1,11 +1,8 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 
-// Configure the client to use Groq's servers
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
+// Initialize Google AI
+const genai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY });
 
 export async function POST(req: Request) {
   try {
@@ -15,21 +12,45 @@ export async function POST(req: Request) {
       return NextResponse.json({ summary: "No items to summarize." });
     }
 
+    // NEW: A much stricter prompt to match your sample style exactly
     const prompt = `
-      You are a Senior Technical Product Manager at Hyperswitch. 
-      Your goal is to summarize the following list of release notes for C-Level executives.
+      You are a Product Manager at Hyperswitch. Write a weekly release summary based on these PRs.
       
-      **Time Range:** ${weekRange}
+      **Target Audience:** C-Level Executives (Focus on business value, not just code).
+      **Date Range:** ${weekRange}
 
-      **Strict Instructions:**
-      1. **Categorize:** Group items into "Global Connectivity", "Core Platform & Reliability", and "Merchant Experience".
-      2. **Summarize:** Combine related PRs into single, high-impact bullet points.
-      3. **Business Value:** Focus on the "Why" (e.g., "Improved conversion" instead of "Refactored code").
-      4. **CITATIONS ARE MANDATORY:** You MUST include the PR links at the end of every bullet point. 
-         - Format: <a href="PR_URL" target="_blank">[#PR_NUMBER]</a>
-      5. **Output Format:** Return ONLY clean HTML (no markdown backticks). Use <h3> for headers and <ul>/<li> for items.
+      **STRICT OUTPUT FORMAT (HTML ONLY):**
+      
+      1. **Header:** Start with <h2 class="text-xl font-bold mb-4 text-white">Weekly Report (${weekRange})</h2>
+      
+      2. **Highlights Section:** Pick the top 3-5 most impactful changes. Format them as:
+         <h3 class="text-lg font-semibold text-purple-400 mt-6 mb-2">Highlights</h3>
+         <ul class="list-disc pl-5 space-y-2 text-slate-300">
+            <li><strong>Title:</strong> Description of value.</li>
+         </ul>
 
-      **Input Data (JSON):**
+      3. **Categorized Updates:** Group the rest under these exact headers:
+         - "Connector expansions and enhancements"
+         - "Customer and access management"
+         - "Routing and core improvements"
+         
+         Format these sections as:
+         <h3 class="text-lg font-semibold text-sky-400 mt-6 mb-2">Category Name</h3>
+         <ul class="list-disc pl-5 space-y-2 text-slate-300">
+            <li>
+               <strong>Feature Name:</strong> The update description. 
+               <span class="text-slate-500 text-xs ml-1">
+                 [<a href="PR_URL" target="_blank" class="hover:text-sky-400 underline">#PR_NUMBER</a>]
+               </span>
+            </li>
+         </ul>
+
+      **Rules:**
+      - Do NOT use markdown (no \`\`\` or **). Use real HTML tags.
+      - Combine related PRs into one bullet point.
+      - Keep descriptions concise but impactful.
+
+      **Input Data:**
       ${JSON.stringify(items.map((i: any) => ({
         title: i.title,
         prNumber: i.prNumber,
@@ -37,23 +58,19 @@ export async function POST(req: Request) {
       })))}
     `;
 
-    const completion = await client.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      // "llama-3.3-70b-versatile" is their best free model (Smart & Fast)
-      model: "llama-3.3-70b-versatile",
-      temperature: 0.5,
+    const response = await genai.models.generateContent({
+      model: 'gemini-1.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
     });
 
-    const summary = completion.choices[0].message.content || "";
+    const summary = response.response.text();
+    // Clean up markdown if the AI adds it despite instructions
     const cleanSummary = summary.replace(/```html/g, '').replace(/```/g, '');
 
     return NextResponse.json({ summary: cleanSummary });
 
   } catch (error) {
-    console.error('Groq API Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate summary' },
-      { status: 500 }
-    );
+    console.error('AI Error:', error);
+    return NextResponse.json({ error: 'Failed to generate summary' }, { status: 500 });
   }
 }
