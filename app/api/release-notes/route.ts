@@ -9,6 +9,7 @@ type ReleaseItem = {
   prNumber?: string;
   prUrl?: string;
   originalDate: string; 
+  version: string | null; // <--- NEW FIELD
 };
 
 type ReleaseWeek = {
@@ -21,19 +22,19 @@ type ReleaseWeek = {
 // Clean up markdown noise
 function cleanTitle(raw: string): string {
   let text = raw;
-  text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, ''); // Remove PR links
-  text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, ''); // Remove other links
-  text = text.replace(/\(\s*\)/g, ''); // Empty parens
-  text = text.replace(/\*\*/g, ''); // Bold markers
-  text = text.replace(/\[[^\]]+\]/g, ''); // [Connector] tags
-  text = text.replace(/`/g, ''); // Backticks
-  text = text.replace(/\s{2,}/g, ' '); // Extra spaces
+  text = text.replace(/\[#\d+\]\(https:\/\/github\.com[^\)]*\)/g, '');
+  text = text.replace(/\(https:\/\/github\.com[^\)]*\)/g, '');
+  text = text.replace(/\(\s*\)/g, '');
+  text = text.replace(/\*\*/g, '');
+  text = text.replace(/\[[^\]]+\]/g, '');
+  text = text.replace(/`/g, '');
+  text = text.replace(/\s{2,}/g, ' ');
   text = text.trim();
-  text = text.replace(/[-–:,;.\s]+$/, ''); // Trailing punctuation
+  text = text.replace(/[-–:,;.\s]+$/, '');
   return text;
 }
 
-// Normalize "Adyen", "ADYEN", "adyen" -> "Adyen"
+// Normalize Connector Names
 function normalizeConnector(raw: string): string {
   if (!raw) return '';
   return raw
@@ -54,17 +55,22 @@ export async function GET() {
     const lines = text.split('\n');
     const weeks: ReleaseWeek[] = [];
     let currentWeek: ReleaseWeek | null = null;
+    let currentVersion: string | null = null; // <--- Track Version
 
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Version Header: ## [2026.01.05.0]
+      // Detect Version: ## [2026.01.05.0]
       const versionMatch = trimmed.match(
-        /^##\s*\[?(\d{4})\.(\d{1,2})\.(\d{1,2})\.\d{1,2}\]?/
+        /^##\s*\[?(\d{4}\.\d{1,2}\.\d{1,2}\.\d{1,2})\]?/
       );
+      
       if (versionMatch) {
-        const [, y, m, d] = versionMatch;
-        const dateStr = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        currentVersion = versionMatch[1]; // Capture "2026.01.05.0"
+        
+        // Parse date from version string
+        const [y, m, d] = currentVersion.split('.').map(Number);
+        const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
         currentWeek = {
           id: dateStr,
@@ -82,14 +88,11 @@ export async function GET() {
         if (!content) continue;
 
         const lower = content.toLowerCase();
-        
-        // Smart Type Detection
         const type: 'Feature' | 'Bug Fix' = 
           lower.includes('fix') || lower.includes('bug') || lower.includes('resolves')
           ? 'Bug Fix' 
           : 'Feature';
 
-        // Connector Extraction
         const connectorMatch = content.match(/\[([a-zA-Z0-9_\s]+)\]/);
         const rawConnector = connectorMatch ? connectorMatch[1].trim() : null;
         const connector = rawConnector ? normalizeConnector(rawConnector) : null;
@@ -108,6 +111,7 @@ export async function GET() {
           prNumber,
           prUrl,
           originalDate: currentWeek.date,
+          version: currentVersion, // <--- Attach Version to Item
         });
       }
     }
