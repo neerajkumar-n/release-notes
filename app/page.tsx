@@ -66,10 +66,6 @@ const SummarySkeleton = () => (
       <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
       <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
     </div>
-    <div className="space-y-4">
-      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
-      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
-    </div>
   </div>
 );
 
@@ -83,7 +79,6 @@ export default function Page() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
   
-  // Track generating and failed states
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
@@ -113,10 +108,9 @@ export default function Page() {
   }, []);
 
   // --- GENERATE SUMMARIES ---
-  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseWeek[], forceRetry = false) => {
-    const CACHE_KEY = 'hyperswitch_summary_cache_v2';
+  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
+    const CACHE_KEY = 'hyperswitch_summary_cache_v4'; // New cache key to clear bad data
     
-    // 1. Load Cache
     let cachedData: Record<string, string> = {};
     try {
       const stored = localStorage.getItem(CACHE_KEY);
@@ -124,7 +118,6 @@ export default function Page() {
       setSummaries(prev => ({ ...prev, ...cachedData }));
     } catch (e) { console.error(e); }
 
-    // 2. Identify missing summaries
     const missingWeeks = weeksToProcess.filter(w => 
       !cachedData[w.id] && 
       !generatingIds.has(w.id) && 
@@ -133,14 +126,12 @@ export default function Page() {
     
     if (missingWeeks.length === 0) return;
 
-    // Mark as generating
     setGeneratingIds(prev => {
       const next = new Set(prev);
       missingWeeks.forEach(w => next.add(w.id));
       return next;
     });
 
-    // If retrying, remove from failed list
     if (forceRetry) {
       setFailedIds(prev => {
         const next = new Set(prev);
@@ -149,7 +140,7 @@ export default function Page() {
       });
     }
 
-    // 3. Generate sequentially
+    // Process sequentially to be safe
     for (const week of missingWeeks) {
       try {
         const res = await fetch('/api/generate-summary', {
@@ -191,57 +182,81 @@ export default function Page() {
     }
   }, [generatingIds, failedIds]);
 
-  // Trigger generation when visible weeks change
-  useEffect(() => {
-    if (allParsedWeeks.length > 0) {
-      const visible = allParsedWeeks.slice(0, visibleWeeksCount);
-      generateSummariesForVisible(visible);
-    }
-  }, [allParsedWeeks, visibleWeeksCount, generateSummariesForVisible]);
-
-  // --- GROUPING & DISPLAY LOGIC ---
+  // --- GROUPING LOGIC (Anti-Duplicate) ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
-    const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
+    // Helper: Determine strict Wednesday cycle
+    const getCycleId = (dateStr: string) => {
+        const date = parseISO(dateStr);
+        const cycle = isWednesday(date) ? date : nextWednesday(date);
+        return format(cycle, 'yyyy-MM-dd');
+    };
 
-    const mapped: ReleaseGroup[] = slicedWeeks.map(week => {
-       const cycleDateObj = parseISO(week.id);
-       const prevThurs = new Date(cycleDateObj);
-       prevThurs.setDate(cycleDateObj.getDate() - 6);
-       
-       const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === week.id);
-       const prodDate = addDays(cycleDateObj, 8);
-       
-       const filteredItems = week.items.filter(item => {
+    // Flatten all data first
+    const allItemsFlat = allParsedWeeks.flatMap(w => w.items);
+    
+    // Group strictly by Cycle ID
+    const groups: Record<string, ReleaseItem[]> = {};
+    const versions: Record<string, string> = {};
+
+    allItemsFlat.forEach(item => {
+        const cycleId = getCycleId(item.originalDate);
+        if (!groups[cycleId]) groups[cycleId] = [];
+        groups[cycleId].push(item);
+        
+        if (item.version && !versions[cycleId]) {
+            versions[cycleId] = item.version;
+        }
+    });
+
+    // Sort & Slice
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    const visibleKeys = sortedKeys.slice(0, visibleWeeksCount);
+
+    // Map to UI Objects
+    const mapped: ReleaseGroup[] = visibleKeys.map(key => {
+        const items = groups[key];
+        const cycleDateObj = parseISO(key);
+        const prevThurs = new Date(cycleDateObj);
+        prevThurs.setDate(cycleDateObj.getDate() - 6);
+        
+        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
+        const prodDate = addDays(cycleDateObj, 8);
+
+        // Apply UI Filters to the items inside the group
+        const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
            
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
-           
            return true;
-       });
+        });
 
-       return {
-          id: week.id,
-          date: week.id,
-          headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-          releaseVersion: week.items.find(i => i.version)?.version || null,
-          items: filteredItems,
-          isCurrentWeek: isCurrent,
-          productionDate: format(prodDate, 'EEE, MMM d'),
-          aiSummary: summaries[week.id],
-          isGenerating: generatingIds.has(week.id),
-          hasFailed: failedIds.has(week.id)
-       };
+        return {
+            id: key,
+            date: key,
+            headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
+            releaseVersion: versions[key] || null,
+            items: filteredItems,
+            isCurrentWeek: isCurrent,
+            productionDate: format(prodDate, 'EEE, MMM d'),
+            aiSummary: summaries[key],
+            isGenerating: generatingIds.has(key),
+            hasFailed: failedIds.has(key)
+        };
     });
 
     setGroupedWeeks(mapped);
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate]);
+    
+    // Trigger AI only for what is visible
+    generateSummariesForVisible(mapped);
 
-  const hasMore = visibleWeeksCount < allParsedWeeks.length;
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, generateSummariesForVisible]);
+
+  const hasMore = visibleWeeksCount < allParsedWeeks.length; // Approximate check
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
@@ -382,8 +397,8 @@ export default function Page() {
                                             </button>
                                             <button 
                                                 onClick={() => {
-                                                    const weekObj = allParsedWeeks.find(w => w.id === week.id);
-                                                    if (weekObj) generateSummariesForVisible([weekObj], true);
+                                                    // Retry the specific failed week group
+                                                    generateSummariesForVisible([week], true);
                                                 }}
                                                 className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"
                                             >
