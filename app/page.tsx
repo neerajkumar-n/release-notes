@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
+  ChevronDown,
   Moon,
   Sun,
   List,
@@ -11,7 +12,8 @@ import {
   Clock,
   Rocket,
   ArrowDownCircle,
-  ChevronDown
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import {
   parseISO,
@@ -26,7 +28,6 @@ import {
   isFuture,
 } from 'date-fns';
 
-// --- TYPES ---
 type ReleaseItem = {
   title: string;
   type: 'Feature' | 'Bug Fix';
@@ -37,136 +38,65 @@ type ReleaseItem = {
   version: string | null;
 };
 
-type Classification = {
-  prNumber: string;
-  // Updated keys to match new logic
-  category: 'connectivity' | 'experience' | 'core';
-  subGroup: string;
+type ReleaseWeek = {
+  id: string; // YYYY-MM-DD
+  date: string;
+  headline: string;
+  items: ReleaseItem[];
 };
 
 type ReleaseGroup = {
-  id: string; 
+  id: string; // Wednesday Date
   date: string;
   headline: string;
   releaseVersion: string | null;
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
+  aiSummary?: string;
+  isGenerating?: boolean;
+  hasFailed?: boolean;
 };
 
-// --- COMPONENTS ---
-
-const CategoryBlock = ({ 
-  title, 
-  items, 
-  onSummarize 
-}: { 
-  title: string, 
-  items: ReleaseItem[], 
-  onSummarize: (items: ReleaseItem[], title: string) => Promise<string> 
-}) => {
-  const [summary, setSummary] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    if (!summary && items.length > 0) {
-      onSummarize(items, title).then(res => {
-        if (mounted) setSummary(res);
-      });
-    }
-    return () => { mounted = false; };
-  }, [items, title, onSummarize]);
-
-  return (
-    <div className="mb-4 last:mb-0">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-baseline gap-2">
-            <strong className="text-sm font-bold text-slate-800 dark:text-slate-100">{title}</strong>
-            {summary ? (
-            <span className="text-sm text-slate-600 dark:text-slate-400 leading-snug">{summary}</span>
-            ) : (
-            <span className="inline-flex gap-2 items-center text-xs text-sky-500 animate-pulse">
-                <Sparkles size={10} /> Analyzing...
-            </span>
-            )}
-        </div>
-        
-        {/* Tiny PR pills for transparency */}
-        <div className="flex flex-wrap gap-1.5 mt-1">
-            {items.map(i => (
-            <a key={i.prNumber} href={i.prUrl} target="_blank" className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-400 px-1.5 rounded hover:bg-sky-50 dark:hover:bg-sky-900 hover:text-sky-600 transition-colors">
-                #{i.prNumber}
-            </a>
-            ))}
-        </div>
-      </div>
+// Skeleton for the Executive Summary View
+const SummarySkeleton = () => (
+  <div className="animate-pulse space-y-8">
+    <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
+    <div className="space-y-4">
+      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
+      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
     </div>
-  );
-};
+  </div>
+);
 
 export default function Page() {
-  const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseGroup[]>([]);
+  const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
-  const [classifications, setClassifications] = useState<Record<string, Classification>>({});
+  const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
+  const [summaries, setSummaries] = useState<Record<string, string>>({}); 
   
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
+  
+  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- 1. FETCH & INITIAL GROUPING ---
   useEffect(() => {
     async function fetchData() {
+      console.log('Fetching data...');
       setLoading(true);
       try {
         const res = await fetch('/api/release-notes');
-        const rawWeeks: {items: ReleaseItem[]}[] = await res.json();
-        
-        const allItems = rawWeeks.flatMap(w => w.items);
-        const groups = new Map<string, ReleaseItem[]>();
-        const versionMap = new Map<string, string>();
-
-        const getCycleId = (dateStr: string) => {
-            const date = parseISO(dateStr);
-            const cycle = isWednesday(date) ? date : nextWednesday(date);
-            return format(cycle, 'yyyy-MM-dd');
-        };
-
-        allItems.forEach(item => {
-            const cycleId = getCycleId(item.originalDate);
-            if (!groups.has(cycleId)) groups.set(cycleId, []);
-            groups.get(cycleId)?.push(item);
-            if (item.version && (!versionMap.has(cycleId) || item.version > versionMap.get(cycleId)!)) {
-                versionMap.set(cycleId, item.version);
-            }
-        });
-
-        const sortedKeys = Array.from(groups.keys()).sort((a, b) => b.localeCompare(a));
-        
-        const masterWeeks = sortedKeys.map(key => {
-            const cycleDateObj = parseISO(key);
-            const prevThurs = new Date(cycleDateObj);
-            prevThurs.setDate(cycleDateObj.getDate() - 6);
-            const prodDate = addDays(cycleDateObj, 8);
-
-            return {
-                id: key,
-                date: key,
-                headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-                releaseVersion: versionMap.get(key) || null,
-                items: groups.get(key) || [],
-                isCurrentWeek: isFuture(cycleDateObj) || format(new Date(), 'yyyy-MM-dd') === key,
-                productionDate: format(prodDate, 'EEE, MMM d'),
-            };
-        });
-
-        setAllParsedWeeks(masterWeeks);
+        const rawWeeks: ReleaseWeek[] = await res.json();
+        setAllParsedWeeks(rawWeeks);
       } catch (e) {
-        console.error(e);
+        console.error('Fetch error:', e);
       } finally {
         setLoading(false);
       }
@@ -174,134 +104,183 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- 2. ORCHESTRATOR: CLASSIFY VISIBLE ITEMS ---
-  useEffect(() => {
-    const visibleWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
-    const unclassifiedItems = visibleWeeks.flatMap(w => w.items).filter(i => !classifications[i.prNumber || '']);
+  // --- CLIENT-SIDE CHUNKING (Solves Timeouts) ---
+  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
+    const CACHE_KEY = 'hyperswitch_summary_cache_v7'; // Bump version to clear any bad data
+    
+    let cachedData: Record<string, string> = {};
+    try {
+      const stored = localStorage.getItem(CACHE_KEY);
+      if (stored) cachedData = JSON.parse(stored);
+      setSummaries(prev => ({ ...prev, ...cachedData }));
+    } catch (e) { console.error(e); }
 
-    if (unclassifiedItems.length === 0) return;
+    const missingWeeks = weeksToProcess.filter(w => 
+      !cachedData[w.id] && 
+      !generatingIds.has(w.id) && 
+      (forceRetry || !failedIds.has(w.id))
+    );
+    
+    if (missingWeeks.length === 0) return;
 
-    const classifyBatch = async () => {
-        const chunk = unclassifiedItems.slice(0, 50); 
-        try {
-            const res = await fetch('/api/categorize-items', {
-                method: 'POST',
-                body: JSON.stringify({ items: chunk })
-            });
-            const data = await res.json();
-            
-            if (data.classifications) {
-                setClassifications(prev => {
-                    const next = { ...prev };
-                    data.classifications.forEach((c: Classification) => {
-                        next[c.prNumber] = c;
-                    });
-                    return next;
-                });
-            }
-        } catch (e) {
-            console.error('Classification failed', e);
-        }
-    };
-
-    const timer = setTimeout(classifyBatch, 500);
-    return () => clearTimeout(timer);
-
-  }, [allParsedWeeks, visibleWeeksCount, classifications]);
-
-
-  // --- 3. HELPER: SUMMARIZE A GROUP ---
-  const fetchGroupSummary = useCallback(async (items: ReleaseItem[], subGroup: string) => {
-     try {
-        const res = await fetch('/api/summarize-category', {
-            method: 'POST',
-            body: JSON.stringify({ items, subGroup, category: 'mixed' })
-        });
-        const data = await res.json();
-        return data.summary;
-     } catch (e) {
-        return "Updates included.";
-     }
-  }, []);
-
-
-  // --- RENDER LOGIC ---
-  const renderWeekSummary = (week: ReleaseGroup) => {
-    const groups: Record<string, Record<string, ReleaseItem[]>> = {
-        connectivity: {}, experience: {}, core: {}, unclassified: {}
-    };
-
-    week.items.forEach(item => {
-        const cls = classifications[item.prNumber || ''];
-        const cat = cls?.category || 'unclassified';
-        const sub = cls?.subGroup || 'General';
-        
-        if (!groups[cat]) groups[cat] = {}; 
-        if (!groups[cat][sub]) groups[cat][sub] = [];
-        groups[cat][sub].push(item);
+    setGeneratingIds(prev => {
+      const next = new Set(prev);
+      missingWeeks.forEach(w => next.add(w.id));
+      return next;
     });
 
-    const hasContent = (cat: string) => Object.keys(groups[cat]).length > 0;
+    if (forceRetry) {
+      setFailedIds(prev => {
+        const next = new Set(prev);
+        missingWeeks.forEach(w => next.delete(w.id));
+        return next;
+      });
+    }
 
-    return (
-        <div className="space-y-10">
-            
-            {/* LOADER FOR CLASSIFICATION */}
-            {hasContent('unclassified') && (
-                <div className="p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg opacity-60">
-                    <p className="text-sm text-center flex items-center justify-center gap-2">
-                        <Loader2 className="animate-spin" size={14} /> 
-                        Categorizing {week.items.filter(i => !classifications[i.prNumber||'']).length} updates...
-                    </p>
-                </div>
-            )}
+    for (const week of missingWeeks) {
+      try {
+        // 1. CHUNK IT UP (15 items per chunk)
+        const CHUNK_SIZE = 15;
+        const chunks = [];
+        for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
+            chunks.push(week.items.slice(i, i + CHUNK_SIZE));
+        }
 
-            {/* 1. CONNECTIVITY (Green) */}
-            {hasContent('connectivity') && (
-                <div>
-                    <h4 className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400 border-b border-emerald-500/20 pb-3 mb-5">
-                        Global Connectivity
-                    </h4>
-                    <div className="space-y-6">
-                        {Object.keys(groups.connectivity).sort().map(sub => (
-                            <CategoryBlock key={sub} title={sub} items={groups.connectivity[sub]} onSummarize={fetchGroupSummary} />
-                        ))}
-                    </div>
-                </div>
-            )}
+        // 2. PARALLEL REQUESTS
+        const chunkPromises = chunks.map(chunkItems => 
+            fetch('/api/generate-summary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    items: chunkItems,
+                    weekDate: week.date
+                })
+            }).then(res => {
+                if (!res.ok) throw new Error(`API Error ${res.status}`);
+                return res.json();
+            })
+        );
 
-            {/* 2. EXPERIENCE (Purple) */}
-            {hasContent('experience') && (
-                <div>
-                    <h4 className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-purple-600 dark:text-purple-400 border-b border-purple-500/20 pb-3 mb-5">
-                        Merchant Experience & Operations
-                    </h4>
-                    <div className="space-y-6">
-                        {Object.keys(groups.experience).sort().map(sub => (
-                            <CategoryBlock key={sub} title={sub} items={groups.experience[sub]} onSummarize={fetchGroupSummary} />
-                        ))}
-                    </div>
-                </div>
-            )}
+        const results = await Promise.all(chunkPromises);
+        
+        // 3. COMBINE
+        const combinedFragments = results.map(r => r.summaryFragment).join('');
+        
+        // Wrap in Layout
+        const finalHtml = `
+          <div class="space-y-4">
+            <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
+              <h3 class="text-base font-bold text-slate-900 dark:text-white mb-4 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 pb-2">
+                Executive Summary
+              </h3>
+              <ul class="space-y-3 pl-2 list-none">
+                ${combinedFragments}
+              </ul>
+            </div>
+            <p class="text-[10px] text-center text-slate-400 opacity-60 font-mono mt-2">
+                Analysis of ${week.items.length} updates
+            </p>
+          </div>
+        `;
 
-            {/* 3. CORE (Blue) */}
-            {hasContent('core') && (
-                <div>
-                    <h4 className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-sky-600 dark:text-sky-400 border-b border-sky-500/20 pb-3 mb-5">
-                        Platform Core & Components
-                    </h4>
-                    <div className="space-y-6">
-                        {Object.keys(groups.core).sort().map(sub => (
-                            <CategoryBlock key={sub} title={sub} items={groups.core[sub]} onSummarize={fetchGroupSummary} />
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-  };
+        setSummaries(prev => {
+             const newVal = { ...prev, [week.id]: finalHtml };
+             localStorage.setItem(CACHE_KEY, JSON.stringify(newVal));
+             return newVal;
+        });
 
-  const hasMore = visibleWeeksCount < allParsedWeeks.length;
+      } catch (e) {
+        console.error(`Error summarizing week ${week.id}`, e);
+        setFailedIds(prev => {
+          const next = new Set(prev);
+          next.add(week.id);
+          return next;
+        });
+      } finally {
+        setGeneratingIds(prev => {
+          const next = new Set(prev);
+          next.delete(week.id);
+          return next;
+        });
+      }
+    }
+  }, [generatingIds, failedIds]);
+
+  // --- GROUPING LOGIC (Anti-Duplicate) ---
+  useEffect(() => {
+    if (allParsedWeeks.length === 0) return;
+
+    const getCycleId = (dateStr: string) => {
+        const date = parseISO(dateStr);
+        const cycle = isWednesday(date) ? date : nextWednesday(date);
+        return format(cycle, 'yyyy-MM-dd');
+    };
+
+    const allItemsFlat = allParsedWeeks.flatMap(w => w.items);
+    
+    // Group strictly by Wednesday Cycle
+    const groups: Record<string, ReleaseItem[]> = {};
+    const versions: Record<string, string> = {};
+
+    allItemsFlat.forEach(item => {
+        const cycleId = getCycleId(item.originalDate);
+        if (!groups[cycleId]) groups[cycleId] = [];
+        groups[cycleId].push(item);
+        
+        if (item.version && (!versions[cycleId] || item.version > versions[cycleId])) {
+            versions[cycleId] = item.version;
+        }
+    });
+
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    const visibleKeys = sortedKeys.slice(0, visibleWeeksCount);
+
+    const mapped: ReleaseGroup[] = visibleKeys.map(key => {
+        const items = groups[key];
+        const cycleDateObj = parseISO(key);
+        const prevThurs = new Date(cycleDateObj);
+        prevThurs.setDate(cycleDateObj.getDate() - 6);
+        
+        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
+        const prodDate = addDays(cycleDateObj, 8);
+
+        const filteredItems = items.filter(item => {
+           if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
+           if (typeFilter !== 'All' && item.type !== typeFilter) return false;
+           const itemDate = parseISO(item.originalDate);
+           if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
+           if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
+           return true;
+        });
+
+        return {
+            id: key,
+            date: key,
+            headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
+            releaseVersion: versions[key] || null,
+            items: filteredItems,
+            isCurrentWeek: isCurrent,
+            productionDate: format(prodDate, 'EEE, MMM d'),
+            aiSummary: summaries[key],
+            isGenerating: generatingIds.has(key),
+            hasFailed: failedIds.has(key)
+        };
+    });
+
+    setGroupedWeeks(mapped);
+    generateSummariesForVisible(mapped);
+
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, generateSummariesForVisible]);
+
+  const hasMore = visibleWeeksCount < (allParsedWeeks.length + 5);
+
+  const connectors = useMemo(() => {
+    const uniqueConnectors = new Set<string>();
+    allParsedWeeks.flatMap(w => w.items).forEach(i => {
+        if (i.connector) uniqueConnectors.add(i.connector);
+    });
+    return Array.from(uniqueConnectors).sort();
+  }, [allParsedWeeks]);
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
@@ -342,9 +321,7 @@ export default function Page() {
                 <div className="relative">
                   <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-base text-slate-700 focus:border-sky-500 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                     <option value="All">All Connectors</option>
-                    {Array.from(new Set(allParsedWeeks.flatMap(w => w.items).map(i => i.connector).filter(Boolean))).sort().map((c) => (
-                        <option key={c as string} value={c as string}>{c}</option>
-                    ))}
+                    {connectors.map((c) => (<option key={c} value={c}>{c}</option>))}
                   </select>
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={18} /></div>
                 </div>
@@ -380,7 +357,7 @@ export default function Page() {
                     <Loader2 className="animate-spin mb-3" size={32} />
                     <p>Fetching release history...</p>
                  </div>
-            ) : allParsedWeeks.slice(0, visibleWeeksCount).map((week) => (
+            ) : groupedWeeks.map((week) => (
                 <div key={week.id} className="mb-16 relative pl-8 md:pl-0">
                     <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
@@ -409,7 +386,35 @@ export default function Page() {
                     </div>
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                        {viewMode === 'summary' ? renderWeekSummary(week) : (
+                        {viewMode === 'summary' && (
+                            <>
+                                {week.aiSummary ? (
+                                    <div 
+                                      className="prose prose-slate dark:prose-invert max-w-none"
+                                      dangerouslySetInnerHTML={{ __html: week.aiSummary }}
+                                    />
+                                ) : week.hasFailed ? (
+                                    <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
+                                        <AlertCircle className="text-red-500 mb-3" size={32} />
+                                        <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
+                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry</button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {week.isGenerating && (
+                                            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
+                                                <Sparkles size={16} />
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates...</span>
+                                            </div>
+                                        )}
+                                        <SummarySkeleton />
+                                    </>
+                                )}
+                            </>
+                        )}
+
+                        {viewMode === 'list' && (
                             <ul className="space-y-5">
                             {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items.</li> : 
                                 week.items.map((item, idx) => (
