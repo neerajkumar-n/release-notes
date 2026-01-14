@@ -13,7 +13,7 @@ type ReleaseItem = {
   enhancedTitle?: string;
   description?: string;
   businessImpact?: string;
-  version: string | null; // <--- NEW FIELD
+  version: string | null;
 };
 
 type ReleaseWeek = {
@@ -50,16 +50,19 @@ function normalizeConnector(raw: string): string {
 
 export async function GET() {
   try {
-    const res = await fetch(
-      'https://raw.githubusercontent.com/juspay/hyperswitch/main/CHANGELOG.md'
+    // UPDATED: Added revalidation to cache this request for 1 hour (3600 seconds)
+    constVN = await fetchxB(
+      'https://raw.githubusercontent.com/juspay/hyperswitch/main/CHANGELOG.md',
+      { next: { revalidate: 3600 } }
     );
+    
     if (!res.ok) throw new Error('Failed to fetch changelog');
     const text = await res.text();
 
     const lines = text.split('\n');
     const weeks: ReleaseWeek[] = [];
     let currentWeek: ReleaseWeek | null = null;
-    let currentVersion: string | null = null; // <--- Track Version
+    let currentVersion: string | null = null;
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -70,7 +73,7 @@ export async function GET() {
       );
       
       if (versionMatch) {
-        currentVersion = versionMatch[1]; // Capture "2026.01.05.0"
+        currentVersion = versionMatch[1];
         
         // Parse date from version string
         const [y, m, d] = currentVersion.split('.').map(Number);
@@ -117,24 +120,10 @@ export async function GET() {
           prNumber,
           prUrl,
           originalDate: currentWeek.date,
-          version: currentVersion, // <--- Attach Version to Item
+          version: currentVersion,
         });
       }
     }
-
-    // LLM enhancement DISABLED - causes too much delay
-    // TODO: Implement async enhancement or cache-based approach
-    // const allItems = weeks.flatMap(week => week.items);
-    // try {
-    //   const enhancedItems = await enhanceReleaseItems(allItems);
-    //   let itemIndex = 0;
-    //   for (const week of weeks) {
-    //     week.items = enhancedItems.slice(itemIndex, itemIndex + week.items.length);
-    //     itemIndex += week.items.length;
-    //   }
-    // } catch (llmError) {
-    //   console.error('LLM Enhancement failed, returning raw data:', llmError);
-    // }
 
     return NextResponse.json(weeks);
   } catch (error) {
