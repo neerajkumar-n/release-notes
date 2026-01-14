@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
-  ChevronDown,
   Moon,
   Sun,
   List,
@@ -24,7 +23,6 @@ import {
   endOfDay,
   addDays,
   isFuture,
-  isSameDay
 } from 'date-fns';
 
 type ReleaseItem = {
@@ -34,14 +32,11 @@ type ReleaseItem = {
   prNumber?: string;
   prUrl?: string;
   originalDate: string;
-  enhancedTitle?: string;
-  description?: string;
-  businessImpact?: string;
   version: string | null;
 };
 
 type ReleaseWeek = {
-  id: string; // This is the Date string YYYY-MM-DD
+  id: string; // YYYY-MM-DD
   date: string;
   headline: string;
   items: ReleaseItem[];
@@ -55,42 +50,38 @@ type ReleaseGroup = {
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
+  // NEW: Holds the HTML summary for this week
+  aiSummary?: string;
+  isGenerating?: boolean;
 };
 
-type SummaryCategory =
-  | 'Global Connectivity'
-  | 'Security & Governance'
-  | 'Core Platform & Reliability'
-  | 'Merchant Experience';
-
-// --- NEW SKELETON COMPONENT FOR SMOOTH LOADING ---
-const SkeletonItem = () => (
-  <div className="animate-pulse flex flex-col gap-2 py-2">
-    <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-3/4"></div>
-    <div className="h-3 bg-slate-100 dark:bg-slate-800/50 rounded w-full"></div>
-    <div className="h-3 bg-slate-100 dark:bg-slate-800/50 rounded w-5/6"></div>
+// Skeleton for the Executive Summary View
+const SummarySkeleton = () => (
+  <div className="animate-pulse space-y-8">
+    <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
+    <div className="space-y-4">
+      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
+      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
+    </div>
+    <div className="space-y-4">
+      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
+      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
+    </div>
   </div>
 );
 
 export default function Page() {
-  // MASTER DATA
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
-
-  // ACTIVE DISPLAY DATA
-  const [displayedItems, setDisplayedItems] = useState<ReleaseItem[]>([]);
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
+  const [summaries, setSummaries] = useState<Record<string, string>>({}); // id -> html
   
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-
-  // VIEW STATE
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
-
-  // Enhancement state
-  const [enhancing, setEnhancing] = useState(false);
-  const [enhancedCount, setEnhancedCount] = useState(0);
-  const [totalToEnhance, setTotalToEnhance] = useState(0);
+  
+  // Track which weeks are currently generating summaries
+  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
 
   // FILTERS
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
@@ -98,321 +89,146 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- CATEGORIZATION LOGIC ---
-  function getCategory(item: ReleaseItem): SummaryCategory {
-    if (item.connector) return 'Global Connectivity';
-
-    const text = (item.enhancedTitle || item.title).toLowerCase();
-    const securityKeywords = ['auth', 'security', 'compliance', 'gdpr', 'pci', 'token', 'vault', 'permission', 'role', 'oidc', 'sso'];
-    if (securityKeywords.some(k => text.includes(k))) return 'Security & Governance';
-
-    const coreKeywords = ['routing', 'infrastructure', 'latency', 'performance', 'database', 'optimization', 'api', 'webhook', 'monitoring', 'rust', 'aws', 'db'];
-    if (coreKeywords.some(k => text.includes(k))) return 'Core Platform & Reliability';
-
-    return 'Merchant Experience';
-  }
-
-  // --- FETCH DATA ---
-  async function fetchData() {
-    console.log('Fetching data...');
-    setLoading(true);
-    try {
-      const res = await fetch('/api/release-notes');
-      const rawWeeks: ReleaseWeek[] = await res.json();
-      
-      // 1. STRICT SORT: Ensure weeks are Newest (Today) -> Oldest
-      rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
-
-      setAllParsedWeeks(rawWeeks);
-    } catch (e) {
-      console.error('Fetch error:', e);
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // --- FETCH MASTER DATA ---
   useEffect(() => {
+    async function fetchData() {
+      console.log('Fetching data...');
+      setLoading(true);
+      try {
+        const res = await fetch('/api/release-notes');
+        const rawWeeks: ReleaseWeek[] = await res.json();
+        // Sort Newest -> Oldest
+        rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
+        setAllParsedWeeks(rawWeeks);
+      } catch (e) {
+        console.error('Fetch error:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
     fetchData();
   }, []);
 
-  // --- DERIVE VISIBLE DATA ---
-  useEffect(() => {
-    if (allParsedWeeks.length === 0) return;
-
-    const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
-    const currentItems: ReleaseItem[] = [];
-    slicedWeeks.forEach(week => {
-      currentItems.push(...week.items);
-    });
-
-    setDisplayedItems(prevItems => {
-        const newItems = [...currentItems];
-        return newItems.map(newItem => {
-            const existing = prevItems.find(p => p.title === newItem.title && p.prNumber === newItem.prNumber);
-            return existing ? existing : newItem;
-        });
-    });
-
-  }, [allParsedWeeks, visibleWeeksCount]);
-
-
-  // --- BACKGROUND ENHANCEMENT ---
-  const enhanceInBackground = useCallback(async () => {
-    const CACHE_KEY = 'hyperswitch_enhanced_cache_v1';
+  // --- GENERATE SUMMARIES FOR VISIBLE WEEKS ---
+  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseWeek[]) => {
+    const CACHE_KEY = 'hyperswitch_summary_cache_v2';
     
     // 1. Load Cache
-    let cachedData: Record<string, any> = {};
+    let cachedData: Record<string, string> = {};
     try {
       const stored = localStorage.getItem(CACHE_KEY);
       if (stored) cachedData = JSON.parse(stored);
-    } catch (e) { console.error('Cache read error', e); }
+      setSummaries(prev => ({ ...prev, ...cachedData }));
+    } catch (e) { console.error(e); }
 
-    // 2. Identify items that need enhancement
-    const itemsToFetch: ReleaseItem[] = [];
-    let stateUpdatedFromCache = false;
+    // 2. Identify missing summaries
+    const missingWeeks = weeksToProcess.filter(w => !cachedData[w.id] && !generatingIds.has(w.id));
+    
+    if (missingWeeks.length === 0) return;
 
-    const currentItemsWithCache = displayedItems.map(item => {
-        const key = `${item.title}-${item.prNumber}`;
-        if (cachedData[key]) {
-            if (!item.enhancedTitle) {
-                stateUpdatedFromCache = true;
-                return {
-                    ...item,
-                    enhancedTitle: cachedData[key].enhancedTitle,
-                    description: cachedData[key].description,
-                    businessImpact: cachedData[key].businessImpact
-                };
-            }
-        } else if (!item.enhancedTitle) {
-            itemsToFetch.push(item);
-        }
-        return item;
+    // Mark as generating
+    setGeneratingIds(prev => {
+      const next = new Set(prev);
+      missingWeeks.forEach(w => next.add(w.id));
+      return next;
     });
 
-    if (stateUpdatedFromCache) {
-        setDisplayedItems(currentItemsWithCache);
-    }
-
-    if (itemsToFetch.length === 0) return;
-
-    // 3. Process remaining items
-    setEnhancing(true);
-    setTotalToEnhance(itemsToFetch.length);
-    setEnhancedCount(0);
-
-    const batchSize = 5; 
-    let processed = 0;
-
-    for (let i = 0; i < itemsToFetch.length; i += batchSize) {
-      const batch = itemsToFetch.slice(i, i + batchSize);
+    // 3. Generate sequentially (or parallel if you prefer)
+    for (const week of missingWeeks) {
       try {
-        const res = await fetch('/api/enhance-items', {
+        const res = await fetch('/api/generate-summary', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: batch })
+          body: JSON.stringify({ 
+            items: week.items,
+            weekDate: week.date
+          })
         });
         const data = await res.json();
-
-        if (data.items) {
-          setDisplayedItems(prev => {
-            const updated = [...prev];
-            data.items.forEach((enhanced: ReleaseItem) => {
-              const idx = updated.findIndex(item => item.title === enhanced.title && item.prNumber === enhanced.prNumber);
-              if (idx >= 0) {
-                updated[idx] = enhanced;
-                
-                const key = `${enhanced.title}-${enhanced.prNumber}`;
-                cachedData[key] = {
-                    enhancedTitle: enhanced.enhancedTitle,
-                    description: enhanced.description,
-                    businessImpact: enhanced.businessImpact
-                };
-              }
-            });
-            return updated;
+        
+        if (data.summary) {
+          // Update State
+          setSummaries(prev => {
+             const newVal = { ...prev, [week.id]: data.summary };
+             // Update Cache inside the loop to save progress
+             localStorage.setItem(CACHE_KEY, JSON.stringify(newVal));
+             return newVal;
           });
-          
-          localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData));
         }
       } catch (e) {
-        console.error('Batch enhancement error:', e);
+        console.error(`Error summarizing week ${week.id}`, e);
+      } finally {
+        setGeneratingIds(prev => {
+          const next = new Set(prev);
+          next.delete(week.id);
+          return next;
+        });
       }
-
-      processed += batch.length;
-      setEnhancedCount(processed);
     }
+  }, [generatingIds]);
 
-    setEnhancing(false);
-  }, [displayedItems]); 
-
+  // Trigger Summary Generation when visible weeks change
   useEffect(() => {
-    if (displayedItems.length > 0 && !enhancing) {
-      const timer = setTimeout(() => {
-        enhanceInBackground();
-      }, 500);
-      return () => clearTimeout(timer);
+    if (allParsedWeeks.length > 0) {
+      const visible = allParsedWeeks.slice(0, visibleWeeksCount);
+      generateSummariesForVisible(visible);
     }
-  }, [displayedItems.length, enhancing, enhanceInBackground]);
+  }, [allParsedWeeks, visibleWeeksCount, generateSummariesForVisible]);
 
 
-  // --- GROUPING LOGIC ---
+  // --- GROUPING & DISPLAY LOGIC ---
   useEffect(() => {
-    const filteredItems = displayedItems.filter((item) => {
-      const itemDate = parseISO(item.originalDate);
-      if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
-      if (typeFilter !== 'All' && item.type !== typeFilter) return false;
-      if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
-      if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
-      return true;
-    });
+    if (allParsedWeeks.length === 0) return;
 
-    const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
-    
-    filteredItems.forEach((item) => {
-      const releaseDate = parseISO(item.originalDate);
-      const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
-      const key = format(cycleDate, 'yyyy-MM-dd');
-      
-      if (!groups[key]) groups[key] = { items: [], version: null };
-      
-      groups[key].items.push(item);
-      if (item.version && isSameDay(releaseDate, cycleDate)) {
-        groups[key].version = item.version;
-      }
-    });
+    // 1. Slice Logic
+    const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
 
-    const result: ReleaseGroup[] = Object.keys(groups)
-      .sort((a, b) => b.localeCompare(a))
-      .map((dateKey) => {
-        const cycleDateObj = parseISO(dateKey);
-        const prevThurs = new Date(cycleDateObj);
-        prevThurs.setDate(cycleDateObj.getDate() - 6);
+    // 2. Map to Display Objects
+    const mapped: ReleaseGroup[] = slicedWeeks.map(week => {
+       const cycleDateObj = parseISO(week.id);
+       const prevThurs = new Date(cycleDateObj);
+       prevThurs.setDate(cycleDateObj.getDate() - 6);
+       
+       const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === week.id);
+       const prodDate = addDays(cycleDateObj, 8);
+       
+       // RESTORED: Filter Items for List View
+       const filteredItems = week.items.filter(item => {
+           // Connector Filter
+           if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
+           // Type Filter
+           if (typeFilter !== 'All' && item.type !== typeFilter) return false;
+           
+           // Date Range Filter (Restored!)
+           const itemDate = parseISO(item.originalDate);
+           if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
+           if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
 
-        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === dateKey);
-        const prodDate = addDays(cycleDateObj, 8);
+           return true;
+       });
 
-        return {
-          id: dateKey,
-          date: dateKey,
+       return {
+          id: week.id,
+          date: week.id,
           headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-          releaseVersion: groups[dateKey].version,
-          items: groups[dateKey].items,
+          releaseVersion: week.items.find(i => i.version)?.version || null,
+          items: filteredItems,
           isCurrentWeek: isCurrent,
           productionDate: format(prodDate, 'EEE, MMM d'),
-        };
-      });
-    setGroupedWeeks(result);
-  }, [displayedItems, connectorFilter, typeFilter, fromDate, toDate]);
+          aiSummary: summaries[week.id],
+          isGenerating: generatingIds.has(week.id)
+       };
+    });
 
-  const connectors = useMemo(() => {
-    const set = new Set<string>();
-    displayedItems.forEach((item) => { if (item.connector) set.add(item.connector); });
-    return Array.from(set).sort();
-  }, [displayedItems]);
-
-
-  // --- UPDATED RENDER HELPERS (With Skeletons) ---
-  const renderSummarySection = (title: string, items: ReleaseItem[]) => {
-    if (items.length === 0) return null;
-
-    if (title === 'Global Connectivity') {
-      const byConnector: Record<string, ReleaseItem[]> = {};
-      items.forEach(item => {
-        const name = item.connector || 'Other';
-        if (!byConnector[name]) byConnector[name] = [];
-        byConnector[name].push(item);
-      });
-
-      return (
-        <div className="mb-6">
-          <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 border-b border-emerald-500/20 pb-1 w-fit">
-            {title}
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(byConnector).sort().map(([name, connectorItems]) => (
-              <div key={name} className="rounded-lg bg-white border border-slate-200 p-4 shadow-sm dark:bg-slate-800/40 dark:border-slate-700/50">
-                <span className="block mb-3 font-bold text-slate-800 dark:text-slate-100">{name}</span>
-                <ul className="space-y-3">
-                  {connectorItems.map((c, i) => {
-                    // UX FIX: If in Summary mode and not enhanced, show SKELETON
-                    if (!c.enhancedTitle) return <SkeletonItem key={i} />;
-                    
-                    return (
-                        <li key={i} className="text-sm">
-                        <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
-                            {c.enhancedTitle}
-                        </span>
-                        {c.description && (
-                            <span className="text-slate-600 dark:text-slate-400 block mb-1">
-                            {c.description}
-                            </span>
-                        )}
-                        {c.businessImpact && (
-                            <span className="text-xs text-emerald-600 dark:text-emerald-400 italic block">
-                            {c.businessImpact}
-                            </span>
-                        )}
-                        {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-[10px] text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
-                        </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="mb-6">
-        <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-sky-600 dark:text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
-          {title}
-        </h3>
-        <ul className="space-y-4">
-          {items.map((item, idx) => {
-            // UX FIX: If in Summary mode and not enhanced, show SKELETON
-            if (!item.enhancedTitle) return <SkeletonItem key={idx} />;
-
-            return (
-                <li key={idx} className="flex flex-col gap-1.5 text-sm group">
-                <div className="flex items-start gap-3">
-                    <span className="text-slate-400 dark:text-slate-500 mt-1">•</span>
-                    <div className="flex-1">
-                    <span className="font-semibold text-slate-800 dark:text-slate-200 block">
-                        {item.enhancedTitle}
-                    </span>
-                    {item.description && (
-                        <span className="text-slate-600 dark:text-slate-400 block mt-1">
-                        {item.description}
-                        </span>
-                    )}
-                    {item.businessImpact && (
-                        <span className="text-xs text-sky-600 dark:text-sky-400 italic block mt-1">
-                        {item.businessImpact}
-                        </span>
-                    )}
-                    {item.prNumber && (
-                        <a href={item.prUrl} target="_blank" className="ml-2 text-[10px] text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
-                        [#{item.prNumber}]
-                        </a>
-                    )}
-                    </div>
-                </div>
-                </li>
-            );
-          })}
-        </ul>
-      </div>
-    );
-  };
+    setGroupedWeeks(mapped);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, connectorFilter, typeFilter, fromDate, toDate]);
 
   const hasMore = visibleWeeksCount < allParsedWeeks.length;
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 font-sans selection:bg-sky-500/30 transition-colors duration-300">
-        <main className="mx-auto max-w-6xl px-4 pb-20 pt-12">
+        <main className="mx-auto max-w-5xl px-4 pb-20 pt-12">
           
           {/* HEADER */}
           <section className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-gray-200 dark:border-slate-800 pb-8">
@@ -420,17 +236,9 @@ export default function Page() {
                   <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mb-3">
                       Hyperswitch Release Notes
                   </h1>
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Updates from {allParsedWeeks.length > 0 ? format(parseISO(allParsedWeeks[0].date), 'MMMM yyyy') : '...'}
-                    </p>
-                    {enhancing && (
-                      <div className="flex items-center gap-2 text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-2 py-1 rounded-full">
-                        <Sparkles size={12} className="animate-spin" />
-                        <span>Processing new updates...</span>
-                      </div>
-                    )}
-                  </div>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Weekly updates tracked from GitHub Changelog.
+                  </p>
               </div>
 
               <div className="flex items-center gap-4">
@@ -465,7 +273,10 @@ export default function Page() {
                 <div className="relative">
                   <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-base text-slate-700 focus:border-sky-500 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                     <option value="All">All Connectors</option>
-                    {connectors.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {/* Note: We dynamically extract connectors from ALL weeks, not just visible ones, to avoid filters appearing/disappearing */}
+                    {Array.from(new Set(allParsedWeeks.flatMap(w => w.items).map(i => i.connector).filter(Boolean))).sort().map((c) => (
+                        <option key={c as string} value={c as string}>{c}</option>
+                    ))}
                   </select>
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={18} /></div>
                 </div>
@@ -494,29 +305,23 @@ export default function Page() {
             </div>
           </section>
 
-          {/* --- CONTENT AREA --- */}
+          {/* CONTENT */}
           <section className="min-h-[400px]">
             {loading ? (
                  <div className="flex flex-col items-center justify-center py-20 opacity-50">
                     <Loader2 className="animate-spin mb-3" size={32} />
                     <p>Fetching release history...</p>
                  </div>
-            ) : groupedWeeks.length === 0 ? (
-               <div className="text-center py-20 border border-dashed border-gray-300 rounded-2xl dark:border-slate-800 opacity-60">
-                 <p className="text-lg text-slate-500">No release notes found for these filters.</p>
-               </div>
-            ) : (
-                <>
-                {groupedWeeks.map((week) => (
-                <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
+            ) : groupedWeeks.map((week) => (
+                <div key={week.id} className="mb-16 relative pl-8 md:pl-0">
                     {/* Timeline line */}
                     <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
                     {/* WEEK HEADER */}
                     <div className="mb-6">
                         <div className="flex items-baseline gap-4 mb-3">
-                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
-                        <span className="text-base font-mono text-slate-500">{week.date}</span>
+                            <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
+                            <span className="text-base font-mono text-slate-500">{week.date}</span>
                         </div>
                         
                         <div className="flex flex-wrap items-center gap-4">
@@ -525,14 +330,12 @@ export default function Page() {
                                     <Clock size={12} /> In Progress
                                 </span>
                             )}
-                            
                             {week.releaseVersion && (
                                 <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
                                     {week.releaseVersion}
                                 </span>
                             )}
-
-                            <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
+                             <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
                                 <Rocket size={14} />
                                 Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
                             </span>
@@ -541,75 +344,70 @@ export default function Page() {
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
                         
-                        {/* EXECUTIVE VIEW (Now with Skeletons) */}
+                        {/* EXECUTIVE VIEW */}
                         {viewMode === 'summary' && (
-                            <div>
-                            {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
-                            <div className="grid md:grid-cols-2 gap-x-16 gap-y-8">
-                                <div>
-                                    {renderSummarySection('Merchant Experience', week.items.filter(i => getCategory(i) === 'Merchant Experience'))}
-                                    {renderSummarySection('Security & Governance', week.items.filter(i => getCategory(i) === 'Security & Governance'))}
-                                </div>
-                                <div>
-                                    {renderSummarySection('Core Platform & Reliability', week.items.filter(i => getCategory(i) === 'Core Platform & Reliability'))}
-                                </div>
-                            </div>
-                            </div>
+                            <>
+                                {week.aiSummary ? (
+                                    <div 
+                                      className="prose prose-slate dark:prose-invert max-w-none"
+                                      dangerouslySetInnerHTML={{ __html: week.aiSummary }}
+                                    />
+                                ) : (
+                                    <>
+                                        {week.isGenerating && (
+                                            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
+                                                <Sparkles size={16} />
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
+                                            </div>
+                                        )}
+                                        <SummarySkeleton />
+                                    </>
+                                )}
+                            </>
                         )}
 
-                        {/* LIST VIEW (Always Raw Data) */}
+                        {/* LIST VIEW (Raw Data) */}
                         {viewMode === 'list' && (
                             <ul className="space-y-5">
-                            {week.items.map((item, idx) => (
-                                <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
-                                    <div className="flex items-start gap-3">
-                                        <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                            {item.type === 'Feature' ? 'FEAT' : 'FIX'}
-                                        </span>
-                                        <div className="flex-1">
-                                        <p className="font-medium text-slate-800 dark:text-slate-200">
-                                            {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
-                                            {/* In List Mode, we prefer Enhanced if available, but Raw is fine too */}
-                                            {item.enhancedTitle || item.title}
-                                        </p>
-                                        {item.description && (
-                                            <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
-                                                {item.description}
+                            {week.items.length === 0 ? (
+                                <li className="text-slate-500 text-sm italic">No items match your filters for this week.</li>
+                            ) : (
+                                week.items.map((item, idx) => (
+                                    <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
+                                        <div className="flex items-start gap-3">
+                                            <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                                {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                            </span>
+                                            <div className="flex-1">
+                                            <p className="font-medium text-slate-800 dark:text-slate-200">
+                                                {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
+                                                {item.title}
                                             </p>
-                                        )}
-                                        {item.businessImpact && (
-                                            <p className="text-xs text-sky-600 dark:text-sky-400 italic mt-1">
-                                                {item.businessImpact}
-                                            </p>
-                                        )}
-                                        {item.prNumber && (
                                             <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 mt-1 inline-block">
                                                 #{item.prNumber}
                                             </a>
-                                        )}
+                                            </div>
                                         </div>
-                                    </div>
-                                </li>
-                            ))}
+                                    </li>
+                                ))
+                            )}
                             </ul>
                         )}
                     </div>
                 </div>
-                ))}
-                
-                {/* PAGINATION BUTTON */}
-                {hasMore && (
-                    <div className="flex justify-center mt-8 mb-12">
-                        <button
-                            onClick={() => setVisibleWeeksCount(prev => prev + 2)}
-                            className="group flex flex-col items-center gap-2 text-slate-500 hover:text-sky-600 transition-colors"
-                        >
-                            <span className="text-sm font-semibold tracking-widest uppercase">Load Previous Weeks</span>
-                            <ArrowDownCircle size={32} className="group-hover:translate-y-1 transition-transform" />
-                        </button>
-                    </div>
-                )}
-                </>
+            ))}
+            
+            {/* PAGINATION BUTTON */}
+            {hasMore && (
+                <div className="flex justify-center mt-8 mb-12">
+                    <button
+                        onClick={() => setVisibleWeeksCount(prev => prev + 2)}
+                        className="group flex flex-col items-center gap-2 text-slate-500 hover:text-sky-600 transition-colors"
+                    >
+                        <span className="text-sm font-semibold tracking-widest uppercase">Load Previous Weeks</span>
+                        <ArrowDownCircle size={32} className="group-hover:translate-y-1 transition-transform" />
+                    </button>
+                </div>
             )}
           </section>
         </main>
