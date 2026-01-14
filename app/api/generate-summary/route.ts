@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
     // SAFETY 2: Force a fast model. GPT-4o-mini is ~10x faster than GPT-4.
     // If your custom AI proxy doesn't support this specific ID, change it to what it supports (e.g. 'gpt-3.5-turbo').
-    const modelId = process.env.AI_MODEL_ID || 'gpt-4o-mini'; 
+    const modelId = process.env.AI_MODEL_ID || 'glm-latest'; 
 
     const completion = await openai.chat.completions.create({
       model: modelId,
