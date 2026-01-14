@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ChevronDown,
   Moon,
@@ -46,7 +46,7 @@ type ReleaseWeek = {
 };
 
 type ReleaseGroup = {
-  id: string;
+  id: string; // This will be the WEDNESDAY date string
   date: string;
   headline: string;
   releaseVersion: string | null;
@@ -58,7 +58,6 @@ type ReleaseGroup = {
   hasFailed?: boolean;
 };
 
-// Skeleton for the Executive Summary View
 const SummarySkeleton = () => (
   <div className="animate-pulse space-y-8">
     <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
@@ -82,7 +81,6 @@ export default function Page() {
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
-  // FILTERS
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
@@ -96,7 +94,6 @@ export default function Page() {
       try {
         const res = await fetch('/api/release-notes');
         const rawWeeks: ReleaseWeek[] = await res.json();
-        rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
         setAllParsedWeeks(rawWeeks);
       } catch (e) {
         console.error('Fetch error:', e);
@@ -109,7 +106,7 @@ export default function Page() {
 
   // --- GENERATE SUMMARIES ---
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
-    const CACHE_KEY = 'hyperswitch_summary_cache_v4'; // New cache key to clear bad data
+    const CACHE_KEY = 'hyperswitch_summary_cache_v5'; // Bump version to clear bad "thinking" cache
     
     let cachedData: Record<string, string> = {};
     try {
@@ -140,7 +137,6 @@ export default function Page() {
       });
     }
 
-    // Process sequentially to be safe
     for (const week of missingWeeks) {
       try {
         const res = await fetch('/api/generate-summary', {
@@ -182,53 +178,65 @@ export default function Page() {
     }
   }, [generatingIds, failedIds]);
 
-  // --- GROUPING LOGIC (Anti-Duplicate) ---
+  // --- GROUPING LOGIC (The Duplicate Fix) ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
-    // Helper: Determine strict Wednesday cycle
+    // 1. Helper: Get strictly the Wednesday Date String
     const getCycleId = (dateStr: string) => {
         const date = parseISO(dateStr);
+        // If it is Wednesday, use it. If not, find next Wednesday.
         const cycle = isWednesday(date) ? date : nextWednesday(date);
         return format(cycle, 'yyyy-MM-dd');
     };
 
-    // Flatten all data first
+    // 2. Flatten EVERYTHING first
     const allItemsFlat = allParsedWeeks.flatMap(w => w.items);
     
-    // Group strictly by Cycle ID
-    const groups: Record<string, ReleaseItem[]> = {};
-    const versions: Record<string, string> = {};
+    // 3. Re-Group Aggressively by Cycle ID
+    const groupedByCycle = new Map<string, ReleaseItem[]>();
+    const versionMap = new Map<string, string>();
 
     allItemsFlat.forEach(item => {
         const cycleId = getCycleId(item.originalDate);
-        if (!groups[cycleId]) groups[cycleId] = [];
-        groups[cycleId].push(item);
         
-        if (item.version && !versions[cycleId]) {
-            versions[cycleId] = item.version;
+        if (!groupedByCycle.has(cycleId)) {
+            groupedByCycle.set(cycleId, []);
+        }
+        groupedByCycle.get(cycleId)?.push(item);
+
+        // Keep the "latest" version found for this cycle
+        // A simple string compare usually works for versions like 2026.01.14.1 > 2026.01.14.0
+        if (item.version) {
+            const currentVer = versionMap.get(cycleId);
+            if (!currentVer || item.version > currentVer) {
+                versionMap.set(cycleId, item.version);
+            }
         }
     });
 
-    // Sort & Slice
-    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    // 4. Sort Keys (Newest First)
+    const sortedKeys = Array.from(groupedByCycle.keys()).sort((a, b) => b.localeCompare(a));
+    
+    // 5. Slice for Pagination
     const visibleKeys = sortedKeys.slice(0, visibleWeeksCount);
 
-    // Map to UI Objects
+    // 6. Map to UI Objects
     const mapped: ReleaseGroup[] = visibleKeys.map(key => {
-        const items = groups[key];
+        const items = groupedByCycle.get(key) || [];
         const cycleDateObj = parseISO(key);
+        
+        // Calculate headline dates
         const prevThurs = new Date(cycleDateObj);
         prevThurs.setDate(cycleDateObj.getDate() - 6);
         
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
-        // Apply UI Filters to the items inside the group
+        // Apply Filters
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
-           
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
@@ -239,7 +247,7 @@ export default function Page() {
             id: key,
             date: key,
             headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-            releaseVersion: versions[key] || null,
+            releaseVersion: versionMap.get(key) || null,
             items: filteredItems,
             isCurrentWeek: isCurrent,
             productionDate: format(prodDate, 'EEE, MMM d'),
@@ -251,12 +259,21 @@ export default function Page() {
 
     setGroupedWeeks(mapped);
     
-    // Trigger AI only for what is visible
+    // Trigger AI
     generateSummariesForVisible(mapped);
 
   }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, generateSummariesForVisible]);
 
-  const hasMore = visibleWeeksCount < allParsedWeeks.length; // Approximate check
+  const hasMore = visibleWeeksCount < (allParsedWeeks.length + 5);
+
+  // --- CONNECTORS LIST (Dynamic) ---
+  const connectors = useMemo(() => {
+    const uniqueConnectors = new Set<string>();
+    allParsedWeeks.flatMap(w => w.items).forEach(i => {
+        if (i.connector) uniqueConnectors.add(i.connector);
+    });
+    return Array.from(uniqueConnectors).sort();
+  }, [allParsedWeeks]);
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
@@ -306,8 +323,8 @@ export default function Page() {
                 <div className="relative">
                   <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-base text-slate-700 focus:border-sky-500 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                     <option value="All">All Connectors</option>
-                    {Array.from(new Set(allParsedWeeks.flatMap(w => w.items).map(i => i.connector).filter(Boolean))).sort().map((c) => (
-                        <option key={c as string} value={c as string}>{c}</option>
+                    {connectors.map((c) => (
+                        <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={18} /></div>
@@ -397,7 +414,6 @@ export default function Page() {
                                             </button>
                                             <button 
                                                 onClick={() => {
-                                                    // Retry the specific failed week group
                                                     generateSummariesForVisible([week], true);
                                                 }}
                                                 className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"
