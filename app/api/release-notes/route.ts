@@ -50,8 +50,8 @@ function normalizeConnector(raw: string): string {
 
 export async function GET() {
   try {
-    // UPDATED: Added revalidation to cache this request for 1 hour (3600 seconds)
-    constVN = await fetchxB(
+    // FIXED LINE BELOW
+    const res = await fetch(
       'https://raw.githubusercontent.com/juspay/hyperswitch/main/CHANGELOG.md',
       { next: { revalidate: 3600 } }
     );
