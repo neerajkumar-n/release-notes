@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
-  ChevronDown, // <--- Added this back
   Moon,
   Sun,
   List,
@@ -11,7 +10,9 @@ import {
   Sparkles,
   Clock,
   Rocket,
-  ArrowDownCircle
+  ArrowDownCircle,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import {
   parseISO,
@@ -51,19 +52,15 @@ type ReleaseGroup = {
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
-  // NEW: Holds the HTML summary for this week
   aiSummary?: string;
   isGenerating?: boolean;
+  hasFailed?: boolean; // New field for error state
 };
 
 // Skeleton for the Executive Summary View
 const SummarySkeleton = () => (
   <div className="animate-pulse space-y-8">
     <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
-    <div className="space-y-4">
-      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
-      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
-    </div>
     <div className="space-y-4">
       <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
       <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
@@ -75,14 +72,15 @@ export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
-  const [summaries, setSummaries] = useState<Record<string, string>>({}); // id -> html
+  const [summaries, setSummaries] = useState<Record<string, string>>({}); 
   
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
   
-  // Track which weeks are currently generating summaries
+  // Track generating and failed states
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   // FILTERS
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
@@ -98,7 +96,6 @@ export default function Page() {
       try {
         const res = await fetch('/api/release-notes');
         const rawWeeks: ReleaseWeek[] = await res.json();
-        // Sort Newest -> Oldest
         rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
         setAllParsedWeeks(rawWeeks);
       } catch (e) {
@@ -110,8 +107,8 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- GENERATE SUMMARIES FOR VISIBLE WEEKS ---
-  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseWeek[]) => {
+  // --- GENERATE SUMMARIES ---
+  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseWeek[], forceRetry = false) => {
     const CACHE_KEY = 'hyperswitch_summary_cache_v2';
     
     // 1. Load Cache
@@ -123,7 +120,12 @@ export default function Page() {
     } catch (e) { console.error(e); }
 
     // 2. Identify missing summaries
-    const missingWeeks = weeksToProcess.filter(w => !cachedData[w.id] && !generatingIds.has(w.id));
+    // We filter out weeks that are already generating OR have failed (unless forcing retry)
+    const missingWeeks = weeksToProcess.filter(w => 
+      !cachedData[w.id] && 
+      !generatingIds.has(w.id) && 
+      (forceRetry || !failedIds.has(w.id))
+    );
     
     if (missingWeeks.length === 0) return;
 
@@ -134,7 +136,16 @@ export default function Page() {
       return next;
     });
 
-    // 3. Generate sequentially (or parallel if you prefer)
+    // If retrying, remove from failed list
+    if (forceRetry) {
+      setFailedIds(prev => {
+        const next = new Set(prev);
+        missingWeeks.forEach(w => next.delete(w.id));
+        return next;
+      });
+    }
+
+    // 3. Generate sequentially
     for (const week of missingWeeks) {
       try {
         const res = await fetch('/api/generate-summary', {
@@ -145,19 +156,28 @@ export default function Page() {
             weekDate: week.date
           })
         });
+
+        if (!res.ok) throw new Error(`API Error ${res.status}`);
+
         const data = await res.json();
         
         if (data.summary) {
-          // Update State
           setSummaries(prev => {
              const newVal = { ...prev, [week.id]: data.summary };
-             // Update Cache inside the loop to save progress
              localStorage.setItem(CACHE_KEY, JSON.stringify(newVal));
              return newVal;
           });
+        } else {
+          throw new Error('No summary returned');
         }
       } catch (e) {
         console.error(`Error summarizing week ${week.id}`, e);
+        // Mark as failed to stop the infinite loop
+        setFailedIds(prev => {
+          const next = new Set(prev);
+          next.add(week.id);
+          return next;
+        });
       } finally {
         setGeneratingIds(prev => {
           const next = new Set(prev);
@@ -166,9 +186,9 @@ export default function Page() {
         });
       }
     }
-  }, [generatingIds]);
+  }, [generatingIds, failedIds]);
 
-  // Trigger Summary Generation when visible weeks change
+  // Trigger generation when visible weeks change
   useEffect(() => {
     if (allParsedWeeks.length > 0) {
       const visible = allParsedWeeks.slice(0, visibleWeeksCount);
@@ -176,15 +196,12 @@ export default function Page() {
     }
   }, [allParsedWeeks, visibleWeeksCount, generateSummariesForVisible]);
 
-
   // --- GROUPING & DISPLAY LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
-    // 1. Slice Logic
     const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
 
-    // 2. Map to Display Objects
     const mapped: ReleaseGroup[] = slicedWeeks.map(week => {
        const cycleDateObj = parseISO(week.id);
        const prevThurs = new Date(cycleDateObj);
@@ -193,18 +210,12 @@ export default function Page() {
        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === week.id);
        const prodDate = addDays(cycleDateObj, 8);
        
-       // Filter Items for List View
        const filteredItems = week.items.filter(item => {
-           // Connector Filter
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
-           // Type Filter
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
-           
-           // Date Range Filter
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
-
            return true;
        });
 
@@ -217,12 +228,13 @@ export default function Page() {
           isCurrentWeek: isCurrent,
           productionDate: format(prodDate, 'EEE, MMM d'),
           aiSummary: summaries[week.id],
-          isGenerating: generatingIds.has(week.id)
+          isGenerating: generatingIds.has(week.id),
+          hasFailed: failedIds.has(week.id)
        };
     });
 
     setGroupedWeeks(mapped);
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, connectorFilter, typeFilter, fromDate, toDate]);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate]);
 
   const hasMore = visibleWeeksCount < allParsedWeeks.length;
 
@@ -274,7 +286,6 @@ export default function Page() {
                 <div className="relative">
                   <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-base text-slate-700 focus:border-sky-500 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                     <option value="All">All Connectors</option>
-                    {/* Note: We dynamically extract connectors from ALL weeks, not just visible ones, to avoid filters appearing/disappearing */}
                     {Array.from(new Set(allParsedWeeks.flatMap(w => w.items).map(i => i.connector).filter(Boolean))).sort().map((c) => (
                         <option key={c as string} value={c as string}>{c}</option>
                     ))}
@@ -315,10 +326,8 @@ export default function Page() {
                  </div>
             ) : groupedWeeks.map((week) => (
                 <div key={week.id} className="mb-16 relative pl-8 md:pl-0">
-                    {/* Timeline line */}
                     <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
-                    {/* WEEK HEADER */}
                     <div className="mb-6">
                         <div className="flex items-baseline gap-4 mb-3">
                             <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
@@ -353,6 +362,30 @@ export default function Page() {
                                       className="prose prose-slate dark:prose-invert max-w-none"
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
+                                ) : week.hasFailed ? (
+                                    <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
+                                        <AlertCircle className="text-red-500 mb-3" size={32} />
+                                        <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
+                                        
+                                        <div className="flex gap-4">
+                                            <button 
+                                                onClick={() => setViewMode('list')}
+                                                className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                            >
+                                                View Raw List
+                                            </button>
+                                            <button 
+                                                onClick={() => {
+                                                    const weekObj = allParsedWeeks.find(w => w.id === week.id);
+                                                    if (weekObj) generateSummariesForVisible([weekObj], true);
+                                                }}
+                                                className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"
+                                            >
+                                                <RefreshCw size={14} /> Retry AI
+                                            </button>
+                                        </div>
+                                    </div>
                                 ) : (
                                     <>
                                         {week.isGenerating && (
