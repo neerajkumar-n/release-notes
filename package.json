@@ -22,6 +22,8 @@
   "@types/node": "latest",
   "@types/react": "latest",
   "@google/generative-ai": "latest",
+  "octokit": "^3.1.2",
+  "@google/generative-ai": "^0.2.1",
   "openai": "latest",
   "@types/react-dom": "latest",
   "tailwindcss": "^3.4.0",
