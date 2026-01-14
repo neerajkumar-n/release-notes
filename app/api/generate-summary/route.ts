@@ -95,7 +95,7 @@ export async function POST(req: Request) {
       </div>
     `;
 
-    const modelId = process.env.AI_MODEL_ID || 'openai/qwen3-coder-480b';
+    const modelId = process.env.AI_MODEL_ID || 'glm-latest';
 
     const completion = await openai.chat.completions.create({
       model: modelId,
