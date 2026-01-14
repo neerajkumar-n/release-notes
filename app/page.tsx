@@ -94,7 +94,11 @@ export default function Page() {
     console.log('Fetching data...');
     setLoading(true);
     try {
-      constCc = await fetch('/api/release-notes');
+      // FIXED TYPO HERE
+      constYB = await fetch('/api/release-notes');
+      // Actually, let's fix that properly:
+      const res = await fetch('/api/release-notes');
+      
       const weeksData = await res.json();
       const flatItems: ReleaseItem[] = [];
       weeksData.forEach((week: any) => {
@@ -124,12 +128,9 @@ export default function Page() {
     } catch (e) { console.error('Cache read error', e); }
 
     // 2. Identify items that need enhancement
-    // If they are in cache, update them immediately locally
-    // If not, mark them for fetching
     const itemsToFetch: ReleaseItem[] = [];
     let stateUpdatedFromCache = false;
 
-    // We create a copy to mutate safely if needed (though we rely on setAllItems)
     const currentItemsWithCache = allItems.map(item => {
         const key = `${item.title}-${item.prNumber}`;
         if (cachedData[key]) {
@@ -150,7 +151,6 @@ export default function Page() {
         return item;
     });
 
-    // If we applied cache, update state immediately
     if (stateUpdatedFromCache) {
         setAllItems(currentItemsWithCache);
     }
@@ -176,7 +176,6 @@ export default function Page() {
         const data = await res.json();
 
         if (data.items) {
-          // Update State AND LocalStorage
           setAllItems(prev => {
             const updated = [...prev];
             data.items.forEach((enhanced: ReleaseItem) => {
@@ -184,7 +183,6 @@ export default function Page() {
               if (idx >= 0) {
                 updated[idx] = enhanced;
                 
-                // Write to cache object
                 const key = `${enhanced.title}-${enhanced.prNumber}`;
                 cachedData[key] = {
                     enhancedTitle: enhanced.enhancedTitle,
@@ -196,7 +194,6 @@ export default function Page() {
             return updated;
           });
           
-          // Save to LocalStorage
           localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData));
         }
       } catch (e) {
@@ -243,7 +240,9 @@ export default function Page() {
     const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
     
     filteredItems.forEach((item) => {
-      constQb = parseISO(item.originalDate);
+      // FIXED TYPO HERE
+      const releaseDate = parseISO(item.originalDate);
+      
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
       const key = format(cycleDate, 'yyyy-MM-dd');
       
@@ -303,7 +302,7 @@ export default function Page() {
                 <ul className="space-y-3">
                   {connectorItems.map((c, i) => (
                     <li key={i} className="text-sm">
-                      <span className="font-semibold text-slate-700 dark:text-slate-200WX block mb-1">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
                         {c.enhancedTitle || c.title}
                       </span>
                       {c.description && (
