@@ -94,9 +94,6 @@ export default function Page() {
     console.log('Fetching data...');
     setLoading(true);
     try {
-      // FIXED TYPO HERE
-      constYB = await fetch('/api/release-notes');
-      // Actually, let's fix that properly:
       const res = await fetch('/api/release-notes');
       
       const weeksData = await res.json();
@@ -240,7 +237,6 @@ export default function Page() {
     const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
     
     filteredItems.forEach((item) => {
-      // FIXED TYPO HERE
       const releaseDate = parseISO(item.originalDate);
       
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
