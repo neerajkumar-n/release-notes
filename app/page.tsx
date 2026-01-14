@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { 
-  RefreshCw, 
   ChevronDown, 
   Moon, 
   Sun,
@@ -22,9 +21,11 @@ import {
   endOfDay,
   addDays,
   isFuture,
-  isSameDay
+  isSameDay,
+  subDays
 } from 'date-fns';
 
+// --- TYPES ---
 type ReleaseItem = {
   title: string;
   type: 'Feature' | 'Bug Fix';
@@ -35,95 +36,117 @@ type ReleaseItem = {
   version: string | null;
 };
 
+// A "Chunk" represents 2 weeks of data + the AI summary for that period
+type DataChunk = {
+  id: number;
+  start: string;
+  end: string;
+  summaryHtml: string;
+  items: ReleaseItem[];
+};
+
 type ReleaseGroup = {
   id: string;
   date: string;     
   headline: string; 
-  releaseVersion: string | null; // <--- Changed to Single Version
+  releaseVersion: string | null;
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
 };
 
-type SummaryCategory = 
-  | 'Global Connectivity' 
-  | 'Security & Governance' 
-  | 'Core Platform & Reliability' 
-  | 'Merchant Experience';
-
 export default function Page() {
+  // State for Chunks (AI View)
+  const [chunks, setChunks] = useState<DataChunk[]>([]);
+  
+  // State for List View (Aggregated items from all chunks)
   const [allItems, setAllItems] = useState<ReleaseItem[]>([]);
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
+  
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
-
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
 
+  // Filters
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- SMART TEXT POLISHER ---
-  function polishText(text: string, type: 'Feature' | 'Bug Fix'): string {
-    let polished = text;
-    polished = polished.replace(/^(feat|fix|chore|refactor|docs)(\([^\)]+\))?:\s*/i, '');
-    polished = polished.replace(/([a-z])_([a-z])/g, '$1 $2');
-    
-    if (type === 'Bug Fix') {
-       if (polished.match(/^fix(ed)?/i)) polished = polished.replace(/^fix(ed)?\s/i, 'Resolved stability issue with ');
-       if (polished.match(/^correct(ed)?/i)) polished = polished.replace(/^correct(ed)?\s/i, 'Rectified data discrepancy in ');
-    } else {
-       if (polished.match(/^add(ed)?/i)) polished = polished.replace(/^add(ed)?\s(support for\s)?/i, 'Enabled capabilities for ');
-       if (polished.match(/^implement(ed)?/i)) polished = polished.replace(/^implement(ed)?\s/i, 'Launched new ');
-       if (polished.match(/^update(ed)?/i)) polished = polished.replace(/^update(ed)?\s/i, 'Enhanced ');
-    }
-    return polished.charAt(0).toUpperCase() + polished.slice(1);
-  }
+  // --- 1. CHUNKING LOGIC (The New Brain) ---
+  const getChunkDates = (chunkIndex: number) => {
+    const today = new Date();
+    // End date moves back 14 days for every "Load More" click
+    const endDate = subDays(today, chunkIndex * 14); 
+    // Start date is 14 days before the end date
+    const startDate = subDays(endDate, 14);
 
-  // --- CATEGORIZATION LOGIC ---
-  function getCategory(item: ReleaseItem): SummaryCategory {
-    if (item.connector) return 'Global Connectivity';
-    
-    const text = item.title.toLowerCase();
-    const securityKeywords = ['auth', 'security', 'compliance', 'gdpr', 'pci', 'token', 'vault', 'permission', 'role', 'oidc', 'sso'];
-    if (securityKeywords.some(k => text.includes(k))) return 'Security & Governance';
-    
-    const coreKeywords = ['routing', 'infrastructure', 'latency', 'performance', 'database', 'optimization', 'api', 'webhook', 'monitoring', 'rust', 'aws', 'db'];
-    if (coreKeywords.some(k => text.includes(k))) return 'Core Platform & Reliability';
-    
-    return 'Merchant Experience';
-  }
+    return {
+      start: startDate.toISOString().split('T')[0], 
+      end: endDate.toISOString().split('T')[0]
+    };
+  };
 
-  // --- FETCH DATA ---
-  async function fetchData() {
+  const loadNextChunk = async () => {
     setLoading(true);
+    setError(null);
+    
+    const nextIndex = chunks.length;
+    const { start, end } = getChunkDates(nextIndex);
+    const cacheKey = `chunk_${start}_${end}`;
+
     try {
-      const res = await fetch('/api/release-notes');
-      const weeksData = await res.json();
-      const flatItems: ReleaseItem[] = [];
-      weeksData.forEach((week: any) => {
-        week.items.forEach((item: ReleaseItem) => flatItems.push(item));
-      });
-      setAllItems(flatItems);
-    } catch (e) {
+      let chunkData: DataChunk;
+
+      // A. Check Local Storage
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        chunkData = JSON.parse(cached);
+      } else {
+        // B. Fetch from API (GitHub + AI)
+        const res = await fetch(`/api/generate-summary?startDate=${start}&endDate=${end}`);
+        if (!res.ok) throw new Error('Failed to fetch summary');
+        
+        const data = await res.json();
+        
+        chunkData = {
+          id: nextIndex,
+          start,
+          end,
+          summaryHtml: data.summary, // The HTML from AI
+          items: data.items || []    // The raw PRs for List View
+        };
+        
+        // Save to cache
+        localStorage.setItem(cacheKey, JSON.stringify(chunkData));
+      }
+
+      // Update State
+      setChunks(prev => [...prev, chunkData]);
+      setAllItems(prev => [...prev, ...chunkData.items]); // Append new items to the main list
+
+    } catch (e: any) {
       console.error(e);
+      setError("Failed to load updates. " + e.message);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  useEffect(() => { fetchData(); }, []);
+  // Initial Load
+  useEffect(() => { loadNextChunk(); }, []);
 
+  // --- 2. LIST VIEW LOGIC (Preserving your existing Grouping) ---
   const connectors = useMemo(() => {
     const set = new Set<string>();
     allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
     return Array.from(set).sort();
   }, [allItems]);
 
-  // --- FILTER & GROUP ---
+  // Re-run grouping whenever `allItems` (data) or filters change
   useEffect(() => {
-    // 1. Filter
+    // A. Filter
     const filteredItems = allItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
@@ -133,7 +156,7 @@ export default function Page() {
       return true;
     });
 
-    // 2. Group by Wednesday
+    // B. Group by Wednesday
     const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
     
     filteredItems.forEach((item) => {
@@ -145,8 +168,6 @@ export default function Page() {
       
       groups[key].items.push(item);
 
-      // LOGIC: Capture the version ONLY if this item's date matches the Wednesday Cycle Date
-      // This ensures we pick the "Release Day" version.
       if (item.version && isSameDay(releaseDate, cycleDate)) {
         groups[key].version = item.version;
       }
@@ -166,7 +187,7 @@ export default function Page() {
           id: dateKey,
           date: dateKey,
           headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-          releaseVersion: groups[dateKey].version, // Single version
+          releaseVersion: groups[dateKey].version,
           items: groups[dateKey].items,
           isCurrentWeek: isCurrent,
           productionDate: format(prodDate, 'EEE, MMM d'),
@@ -175,72 +196,12 @@ export default function Page() {
     setGroupedWeeks(result);
   }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // --- RENDER HELPER ---
-  const renderSummarySection = (title: string, items: ReleaseItem[]) => {
-    if (items.length === 0) return null;
-    
-    if (title === 'Global Connectivity') {
-        const byConnector: Record<string, ReleaseItem[]> = {};
-        items.forEach(item => {
-            const name = item.connector || 'Other';
-            if (!byConnector[name]) byConnector[name] = [];
-            byConnector[name].push(item);
-        });
-
-        return (
-            <div className="mb-8">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 border-b border-emerald-500/20 pb-1 w-fit">
-                    {title}
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {Object.entries(byConnector).sort().map(([name, connectorItems]) => (
-                        <div key={name} className="rounded-lg bg-white border border-slate-200 p-4 shadow-sm dark:bg-slate-800/40 dark:border-slate-700/50">
-                            <span className="block mb-3 text-lg font-bold text-slate-800 dark:text-slate-100">{name}</span>
-                            <ul className="list-disc list-inside space-y-2">
-                                {connectorItems.map((c, i) => (
-                                    <li key={i} className="text-base text-slate-600 dark:text-slate-300 leading-normal">
-                                        {polishText(c.title, c.type)}
-                                        {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
-    }
-
-    return (
-      <div className="mb-8">
-        <h3 className="mb-4 text-sm font-bold uppercase tracking-widest text-sky-600 dark:text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
-            {title}
-        </h3>
-        <ul className="space-y-4">
-          {items.map((item, idx) => (
-            <li key={idx} className="flex gap-3 text-base text-slate-600 dark:text-slate-300 leading-normal group">
-              <span className="text-slate-400 dark:text-slate-500 mt-1.5">•</span>
-              <span>
-                <span className="text-slate-800 dark:text-slate-200 font-medium">{polishText(item.title, item.type)}</span>
-                {item.prNumber && (
-                  <a href={item.prUrl} target="_blank" className="ml-2 text-xs text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
-                      [#{item.prNumber}]
-                  </a>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  };
-
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 font-sans selection:bg-sky-500/30 transition-colors duration-300">
         <main className="mx-auto max-w-6xl px-4 pb-20 pt-12">
           
-          {/* HEADER (Bigger Text) */}
+          {/* HEADER */}
           <section className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-gray-200 dark:border-slate-800 pb-8">
               <div>
                   <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mb-3">
@@ -275,7 +236,7 @@ export default function Page() {
               </div>
           </section>
 
-          {/* FILTERS */}
+          {/* FILTERS (Only show in List Mode or if you want them to apply globally) */}
           <section className="mb-10 p-5 rounded-2xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900/50 shadow-sm">
             <div className="grid gap-5 md:grid-cols-[1fr_200px_auto]">
               <div>
@@ -314,88 +275,113 @@ export default function Page() {
 
           {/* --- CONTENT AREA --- */}
           <section className="min-h-[400px]">
-            {groupedWeeks.length === 0 && !loading && (
-               <div className="text-center py-20 border border-dashed border-gray-300 rounded-2xl dark:border-slate-800 opacity-60">
-                 <p className="text-lg text-slate-500">No release notes found for these filters.</p>
+
+            {/* ERROR STATE */}
+            {error && (
+               <div className="p-4 mb-8 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg border border-red-200 dark:border-red-800">
+                 {error}
+                 <button onClick={() => loadNextChunk()} className="ml-4 underline font-bold">Try Again</button>
                </div>
             )}
 
-            {groupedWeeks.map((week) => (
-               <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
-                  {/* Timeline line */}
-                  <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
+            {/* VIEW MODE: EXECUTIVE (AI CHUNKS) */}
+            {viewMode === 'summary' && (
+              <div className="space-y-12">
+                {chunks.map((chunk) => (
+                   <div key={chunk.id} className="relative pl-8 md:pl-0 fade-in">
+                      {/* Timeline Decoration */}
+                      <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
-                  {/* WEEK HEADER */}
-                  <div className="mb-6">
-                      <div className="flex items-baseline gap-4 mb-3">
-                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
-                        <span className="text-base font-mono text-slate-500">{week.date}</span>
+                      <div className="mb-6">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">
+                           Period: {chunk.start} — {chunk.end}
+                        </span>
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+                          Bi-Weekly Recap
+                        </h2>
                       </div>
-                      
-                      {/* NEW: SINGLE Version + In Progress + Production Note */}
-                      <div className="flex flex-wrap items-center gap-4">
-                         {/* In Progress Label */}
-                         {week.isCurrentWeek && (
-                             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
-                                <Clock size={12} /> In Progress
-                             </span>
-                         )}
-                         
-                         {/* Single Version (Only if it exists for Wednesday) */}
-                         {week.releaseVersion && (
-                             <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
-                                {week.releaseVersion}
-                             </span>
-                         )}
 
-                         {/* Production Note */}
-                         <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
-                             <Rocket size={14} />
-                             Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
-                         </span>
+                      <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+                         {/* THE AI HTML IS RENDERED HERE */}
+                         <div dangerouslySetInnerHTML={{ __html: chunk.summaryHtml }} />
                       </div>
-                  </div>
+                   </div>
+                ))}
+              </div>
+            )}
 
-                  <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                     
-                     {/* RENDER VIEW 1: EXECUTIVE SUMMARY (Regex Polished) */}
-                     {viewMode === 'summary' && (
-                        <div>
-                           {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
-                           <div className="grid md:grid-cols-2 gap-x-16 gap-y-8">
-                              <div>
-                                 {renderSummarySection('Merchant Experience', week.items.filter(i => getCategory(i) === 'Merchant Experience'))}
-                                 {renderSummarySection('Security & Governance', week.items.filter(i => getCategory(i) === 'Security & Governance'))}
-                              </div>
-                              <div>
-                                 {renderSummarySection('Core Platform & Reliability', week.items.filter(i => getCategory(i) === 'Core Platform & Reliability'))}
-                              </div>
-                           </div>
-                        </div>
-                     )}
+            {/* VIEW MODE: LIST (RAW ITEMS) */}
+            {viewMode === 'list' && (
+               <div>
+                  {groupedWeeks.length === 0 && !loading && (
+                    <div className="text-center py-20 border border-dashed border-gray-300 rounded-2xl dark:border-slate-800 opacity-60">
+                      <p className="text-lg text-slate-500">No release notes found for these filters.</p>
+                    </div>
+                  )}
 
-                     {/* RENDER VIEW 2: LIST VIEW (Raw Data) */}
-                     {viewMode === 'list' && (
-                        <ul className="space-y-5">
-                           {week.items.map((item, idx) => (
-                              <li key={idx} className="flex flex-col gap-1 md:flex-row md:items-start md:gap-4 text-base">
-                                 <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                    {item.type === 'Feature' ? 'FEAT' : 'FIX'}
-                                 </span>
-                                 <div className="flex-1">
-                                    <p className="text-slate-700 dark:text-slate-300 leading-snug">
-                                       {item.connector && <strong className="text-slate-900 dark:text-slate-100 mr-1.5">{item.connector}:</strong>}
-                                       {item.title}
-                                    </p>
-                                    {item.prNumber && <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400">#{item.prNumber}</a>}
-                                 </div>
-                              </li>
-                           ))}
-                        </ul>
-                     )}
-                  </div>
+                  {groupedWeeks.map((week) => (
+                    <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
+                      {/* Timeline line */}
+                      <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
+
+                      <div className="mb-6">
+                          <div className="flex items-baseline gap-4 mb-3">
+                            <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
+                            <span className="text-base font-mono text-slate-500">{week.date}</span>
+                          </div>
+                          
+                          <div className="flex flex-wrap items-center gap-4">
+                              {week.isCurrentWeek && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
+                                    <Clock size={12} /> In Progress
+                                </span>
+                              )}
+                              {week.releaseVersion && (
+                                <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                                    {week.releaseVersion}
+                                </span>
+                              )}
+                              <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
+                                  <Rocket size={14} />
+                                  Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
+                              </span>
+                          </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+                         <ul className="space-y-5">
+                            {week.items.map((item, idx) => (
+                               <li key={idx} className="flex flex-col gap-1 md:flex-row md:items-start md:gap-4 text-base">
+                                  <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                     {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                  </span>
+                                  <div className="flex-1">
+                                     <p className="text-slate-700 dark:text-slate-300 leading-snug">
+                                        {item.connector && <strong className="text-slate-900 dark:text-slate-100 mr-1.5">{item.connector}:</strong>}
+                                        {item.title}
+                                     </p>
+                                     {item.prNumber && <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400">#{item.prNumber}</a>}
+                                  </div>
+                               </li>
+                            ))}
+                         </ul>
+                      </div>
+                    </div>
+                  ))}
                </div>
-            ))}
+            )}
+
+            {/* LOAD MORE BUTTON */}
+            <div className="mt-12 text-center pb-20">
+               <button 
+                 onClick={loadNextChunk}
+                 disabled={loading}
+                 className="px-8 py-3 bg-black text-white text-sm font-bold rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg dark:bg-white dark:text-black dark:hover:bg-gray-200"
+               >
+                 {loading ? "Analyzing next 2 weeks..." : "Load Older Updates"}
+               </button>
+            </div>
+            
           </section>
         </main>
       </div>
