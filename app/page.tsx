@@ -1,24 +1,25 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { 
-  RefreshCw, 
-  ChevronDown, 
-  Moon, 
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import {
+  ChevronDown,
+  Moon,
   Sun,
   List,
   FileText,
+  Loader2,
+  Sparkles,
   Clock,
   Rocket
 } from 'lucide-react';
-import { 
-  parseISO, 
-  isBefore, 
-  isAfter, 
-  nextWednesday, 
-  isWednesday, 
-  format, 
-  startOfDay, 
+import {
+  parseISO,
+  isBefore,
+  isAfter,
+  nextWednesday,
+  isWednesday,
+  format,
+  startOfDay,
   endOfDay,
   addDays,
   isFuture,
@@ -31,24 +32,27 @@ type ReleaseItem = {
   connector: string | null;
   prNumber?: string;
   prUrl?: string;
-  originalDate: string; 
+  originalDate: string;
+  enhancedTitle?: string;
+  description?: string;
+  businessImpact?: string;
   version: string | null;
 };
 
 type ReleaseGroup = {
   id: string;
-  date: string;     
-  headline: string; 
+  date: string;
+  headline: string;
   releaseVersion: string | null; // <--- Changed to Single Version
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
 };
 
-type SummaryCategory = 
-  | 'Global Connectivity' 
-  | 'Security & Governance' 
-  | 'Core Platform & Reliability' 
+type SummaryCategory =
+  | 'Global Connectivity'
+  | 'Security & Governance'
+  | 'Core Platform & Reliability'
   | 'Merchant Experience';
 
 export default function Page() {
@@ -57,8 +61,15 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
+  // VIEW STATE: 'summary' = Executive View, 'list' = Detailed List View
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
 
+  // Enhancement state
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhancedCount, setEnhancedCount] = useState(0);
+  const [totalToEnhance, setTotalToEnhance] = useState(0);
+
+  // FILTERS
   const [connectorFilter, setConnectorFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
@@ -84,37 +95,101 @@ export default function Page() {
   // --- CATEGORIZATION LOGIC ---
   function getCategory(item: ReleaseItem): SummaryCategory {
     if (item.connector) return 'Global Connectivity';
-    
-    const text = item.title.toLowerCase();
+
+    const text = (item.enhancedTitle || item.title).toLowerCase();
     const securityKeywords = ['auth', 'security', 'compliance', 'gdpr', 'pci', 'token', 'vault', 'permission', 'role', 'oidc', 'sso'];
     if (securityKeywords.some(k => text.includes(k))) return 'Security & Governance';
-    
+
     const coreKeywords = ['routing', 'infrastructure', 'latency', 'performance', 'database', 'optimization', 'api', 'webhook', 'monitoring', 'rust', 'aws', 'db'];
     if (coreKeywords.some(k => text.includes(k))) return 'Core Platform & Reliability';
-    
+
     return 'Merchant Experience';
   }
 
   // --- FETCH DATA ---
   async function fetchData() {
+    console.log('Fetching data...');
     setLoading(true);
     try {
       const res = await fetch('/api/release-notes');
+      console.log('Response status:', res.status);
       const weeksData = await res.json();
+      console.log('Received weeks:', weeksData.length);
       const flatItems: ReleaseItem[] = [];
       weeksData.forEach((week: any) => {
         week.items.forEach((item: ReleaseItem) => flatItems.push(item));
       });
+      console.log('Total items:', flatItems.length);
       setAllItems(flatItems);
     } catch (e) {
-      console.error(e);
+      console.error('Fetch error:', e);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    console.log('Component mounted, calling fetchData');
+    fetchData();
+  }, []);
 
+  // --- BACKGROUND ENHANCEMENT ---
+  const enhanceInBackground = useCallback(async () => {
+    const itemsToEnhance = allItems.filter(item => !item.enhancedTitle);
+    if (itemsToEnhance.length === 0) return;
+
+    setEnhancing(true);
+    setTotalToEnhance(itemsToEnhance.length);
+    setEnhancedCount(0);
+
+    const batchSize = 5;
+    let processed = 0;
+
+    for (let i = 0; i < itemsToEnhance.length; i += batchSize) {
+      const batch = itemsToEnhance.slice(i, i + batchSize);
+      try {
+        const res = await fetch('/api/enhance-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: batch })
+        });
+        const data = await res.json();
+
+        if (data.items) {
+          setAllItems(prev => {
+            const updated = [...prev];
+            data.items.forEach((enhanced: ReleaseItem) => {
+              const idx = updated.findIndex(item => item.title === enhanced.title && item.prNumber === enhanced.prNumber);
+              if (idx >= 0) {
+                updated[idx] = enhanced;
+              }
+            });
+            return updated;
+          });
+        }
+      } catch (e) {
+        console.error('Batch enhancement error:', e);
+      }
+
+      processed += batch.length;
+      setEnhancedCount(processed);
+    }
+
+    setEnhancing(false);
+  }, [allItems]);
+
+  // Auto-start enhancement when data loads
+  useEffect(() => {
+    if (allItems.length > 0 && !enhancing) {
+      // Small delay to let UI render first
+      const timer = setTimeout(() => {
+        enhanceInBackground();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [allItems.length, enhancing, enhanceInBackground]);
+
+  // --- DERIVED DATA ---
   const connectors = useMemo(() => {
     const set = new Set<string>();
     allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
@@ -178,56 +253,83 @@ export default function Page() {
   // --- RENDER HELPER ---
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
-    
-    if (title === 'Global Connectivity') {
-        const byConnector: Record<string, ReleaseItem[]> = {};
-        items.forEach(item => {
-            const name = item.connector || 'Other';
-            if (!byConnector[name]) byConnector[name] = [];
-            byConnector[name].push(item);
-        });
 
-        return (
-            <div className="mb-8">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 border-b border-emerald-500/20 pb-1 w-fit">
-                    {title}
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {Object.entries(byConnector).sort().map(([name, connectorItems]) => (
-                        <div key={name} className="rounded-lg bg-white border border-slate-200 p-4 shadow-sm dark:bg-slate-800/40 dark:border-slate-700/50">
-                            <span className="block mb-3 text-lg font-bold text-slate-800 dark:text-slate-100">{name}</span>
-                            <ul className="list-disc list-inside space-y-2">
-                                {connectorItems.map((c, i) => (
-                                    <li key={i} className="text-base text-slate-600 dark:text-slate-300 leading-normal">
-                                        {polishText(c.title, c.type)}
-                                        {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
+    // Group Connectors specifically
+    if (title === 'Global Connectivity') {
+      const byConnector: Record<string, ReleaseItem[]> = {};
+      items.forEach(item => {
+        const name = item.connector || 'Other';
+        if (!byConnector[name]) byConnector[name] = [];
+        byConnector[name].push(item);
+      });
+
+      return (
+        <div className="mb-6">
+          <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 border-b border-emerald-500/20 pb-1 w-fit">
+            {title}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(byConnector).sort().map(([name, connectorItems]) => (
+              <div key={name} className="rounded-lg bg-white border border-slate-200 p-4 shadow-sm dark:bg-slate-800/40 dark:border-slate-700/50">
+                <span className="block mb-3 font-bold text-slate-800 dark:text-slate-100">{name}</span>
+                <ul className="space-y-3">
+                  {connectorItems.map((c, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
+                        {c.enhancedTitle || c.title}
+                      </span>
+                      {c.description && (
+                        <span className="text-slate-600 dark:text-slate-400 block mb-1">
+                          {c.description}
+                        </span>
+                      )}
+                      {c.businessImpact && (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400 italic block">
+                          {c.businessImpact}
+                        </span>
+                      )}
+                      {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-[10px] text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
     }
 
     return (
-      <div className="mb-8">
-        <h3 className="mb-4 text-sm font-bold uppercase tracking-widest text-sky-600 dark:text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
-            {title}
+      <div className="mb-6">
+        <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-sky-600 dark:text-sky-400 border-b border-sky-500/20 pb-1 w-fit">
+          {title}
         </h3>
         <ul className="space-y-4">
           {items.map((item, idx) => (
-            <li key={idx} className="flex gap-3 text-base text-slate-600 dark:text-slate-300 leading-normal group">
-              <span className="text-slate-400 dark:text-slate-500 mt-1.5">•</span>
-              <span>
-                <span className="text-slate-800 dark:text-slate-200 font-medium">{polishText(item.title, item.type)}</span>
-                {item.prNumber && (
-                  <a href={item.prUrl} target="_blank" className="ml-2 text-xs text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
+            <li key={idx} className="flex flex-col gap-1.5 text-sm group">
+              <div className="flex items-start gap-3">
+                <span className="text-slate-400 dark:text-slate-500 mt-1">•</span>
+                <div className="flex-1">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 block">
+                    {item.enhancedTitle || item.title}
+                  </span>
+                  {item.description && (
+                    <span className="text-slate-600 dark:text-slate-400 block mt-1">
+                      {item.description}
+                    </span>
+                  )}
+                  {item.businessImpact && (
+                    <span className="text-xs text-sky-600 dark:text-sky-400 italic block mt-1">
+                      {item.businessImpact}
+                    </span>
+                  )}
+                  {item.prNumber && (
+                    <a href={item.prUrl} target="_blank" className="ml-2 text-[10px] text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
                       [#{item.prNumber}]
-                  </a>
-                )}
-              </span>
+                    </a>
+                  )}
+                </div>
+              </div>
             </li>
           ))}
         </ul>
@@ -246,20 +348,28 @@ export default function Page() {
                   <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mb-3">
                       Hyperswitch Release Notes
                   </h1>
-                  <p className="text-base text-slate-500 dark:text-slate-400">
-                      Weekly updates tracked from GitHub Changelog.
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                        Weekly updates tracked from GitHub Changelog.
+                    </p>
+                    {enhancing && (
+                      <div className="flex items-center gap-2 text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-2 py-1 rounded-full">
+                        <Sparkles size={12} className="animate-spin" />
+                        <span>Enhancing {enhancedCount}/{totalToEnhance}...</span>
+                      </div>
+                    )}
+                  </div>
               </div>
-              
+
               <div className="flex items-center gap-4">
-                  <div className="flex bg-gray-200 dark:bg-slate-900 p-1.5 rounded-xl border border-gray-300 dark:border-slate-700">
-                      <button 
+                  <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
+                      <button
                           onClick={() => setViewMode('summary')}
                           className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'summary' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}
                       >
                           <FileText size={16} /> EXECUTIVE
                       </button>
-                      <button 
+                      <button
                           onClick={() => setViewMode('list')}
                           className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}
                       >
@@ -374,20 +484,36 @@ export default function Page() {
                         </div>
                      )}
 
-                     {/* RENDER VIEW 2: LIST VIEW (Raw Data) */}
+                     {/* RENDER VIEW 2: LIST VIEW (Detailed with Descriptions) */}
                      {viewMode === 'list' && (
                         <ul className="space-y-5">
                            {week.items.map((item, idx) => (
-                              <li key={idx} className="flex flex-col gap-1 md:flex-row md:items-start md:gap-4 text-base">
-                                 <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                    {item.type === 'Feature' ? 'FEAT' : 'FIX'}
-                                 </span>
-                                 <div className="flex-1">
-                                    <p className="text-slate-700 dark:text-slate-300 leading-snug">
-                                       {item.connector && <strong className="text-slate-900 dark:text-slate-100 mr-1.5">{item.connector}:</strong>}
-                                       {item.title}
-                                    </p>
-                                    {item.prNumber && <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400">#{item.prNumber}</a>}
+                              <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
+                                 <div className="flex items-start gap-3">
+                                    <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                       {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                    </span>
+                                    <div className="flex-1">
+                                       <p className="font-medium text-slate-800 dark:text-slate-200">
+                                          {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
+                                          {item.enhancedTitle || item.title}
+                                       </p>
+                                       {item.description && (
+                                          <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
+                                             {item.description}
+                                          </p>
+                                       )}
+                                       {item.businessImpact && (
+                                          <p className="text-xs text-sky-600 dark:text-sky-400 italic mt-1">
+                                             {item.businessImpact}
+                                          </p>
+                                       )}
+                                       {item.prNumber && (
+                                          <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 mt-1 inline-block">
+                                             #{item.prNumber}
+                                          </a>
+                                       )}
+                                    </div>
                                  </div>
                               </li>
                            ))}

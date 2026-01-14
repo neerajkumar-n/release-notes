@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { enhanceReleaseItems } from '@/lib/llm-enhancer';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 type ReleaseItem = {
   title: string;
@@ -8,7 +9,10 @@ type ReleaseItem = {
   connector: string | null;
   prNumber?: string;
   prUrl?: string;
-  originalDate: string; 
+  originalDate: string;
+  enhancedTitle?: string;
+  description?: string;
+  businessImpact?: string;
   version: string | null; // <--- NEW FIELD
 };
 
@@ -88,9 +92,11 @@ export async function GET() {
         if (!content) continue;
 
         const lower = content.toLowerCase();
-        const type: 'Feature' | 'Bug Fix' = 
+
+        // Smart Type Detection
+        const type: 'Feature' | 'Bug Fix' =
           lower.includes('fix') || lower.includes('bug') || lower.includes('resolves')
-          ? 'Bug Fix' 
+          ? 'Bug Fix'
           : 'Feature';
 
         const connectorMatch = content.match(/\[([a-zA-Z0-9_\s]+)\]/);
@@ -115,6 +121,20 @@ export async function GET() {
         });
       }
     }
+
+    // LLM enhancement DISABLED - causes too much delay
+    // TODO: Implement async enhancement or cache-based approach
+    // const allItems = weeks.flatMap(week => week.items);
+    // try {
+    //   const enhancedItems = await enhanceReleaseItems(allItems);
+    //   let itemIndex = 0;
+    //   for (const week of weeks) {
+    //     week.items = enhancedItems.slice(itemIndex, itemIndex + week.items.length);
+    //     itemIndex += week.items.length;
+    //   }
+    // } catch (llmError) {
+    //   console.error('LLM Enhancement failed, returning raw data:', llmError);
+    // }
 
     return NextResponse.json(weeks);
   } catch (error) {

@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 
-const genai = new GoogleGenerativeAI(process.env.GOOGLE_GENAI_API_KEY || '');
+// Initialize OpenAI client with LiteLLM configuration
+const openai = new OpenAI({
+  apiKey: process.env.AI_API_KEY || '',
+  baseURL: process.env.AI_BASE_URL || 'https://grid.ai.juspay.net',
+});
 
 export async function POST(req: Request) {
   try {
@@ -34,7 +38,7 @@ export async function POST(req: Request) {
            <h3 class="text-lg font-bold text-sky-400 mb-3 uppercase tracking-wide">Category Name</h3>
            <ul class="space-y-3 pl-0">
              <li class="text-slate-300 text-sm">
-               <strong class="text-white">Feature Name:</strong> 
+               <strong class="text-white">Feature Name:</strong>
                Description text.
                <span class="inline-block ml-2 opacity-60 text-xs">
                  [<a href="PR_URL" target="_blank" class="hover:text-sky-400 underline">#PR_NUMBER</a>]
@@ -56,10 +60,28 @@ export async function POST(req: Request) {
       })))}
     `;
 
-    const model = genai.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    const summary = result.response.text();
-    
+    const modelId = process.env.AI_MODEL_ID || 'openai/qwen3-coder-480b';
+    const maxTokens = parseInt(process.env.AI_MAX_TOKENS || '32768', 10);
+    const temperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
+
+    const completion = await openai.chat.completions.create({
+      model: modelId,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful product manager who writes clear, professional release summaries.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: maxTokens,
+      temperature: temperature,
+    });
+
+    const summary = completion.choices[0]?.message?.content || '';
+
     // Clean up potential markdown
     const cleanSummary = summary.replace(/```html/g, '').replace(/```/g, '');
 
