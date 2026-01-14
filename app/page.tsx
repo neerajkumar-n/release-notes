@@ -7,7 +7,9 @@ import {
   Moon, 
   Sun,
   List,
-  FileText
+  FileText,
+  Clock,
+  Rocket
 } from 'lucide-react';
 import { 
   parseISO, 
@@ -17,7 +19,9 @@ import {
   isWednesday, 
   format, 
   startOfDay, 
-  endOfDay
+  endOfDay,
+  addDays,
+  isFuture
 } from 'date-fns';
 
 type ReleaseItem = {
@@ -27,13 +31,17 @@ type ReleaseItem = {
   prNumber?: string;
   prUrl?: string;
   originalDate: string; 
+  version: string | null;
 };
 
 type ReleaseGroup = {
   id: string;
   date: string;     
   headline: string; 
+  versions: string[]; // List of versions in this cycle
   items: ReleaseItem[];
+  isCurrentWeek: boolean; // For "In Progress" label
+  productionDate: string; // The "Next Thursday" date
 };
 
 type SummaryCategory = 
@@ -48,7 +56,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // VIEW STATE: 'summary' = Executive View (Regex Polished), 'list' = Dev View
+  // VIEW STATE
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
 
   // FILTERS
@@ -57,16 +65,12 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- SMART TEXT POLISHER (No AI needed) ---
-  // Converts "feat: add_stuff" -> "Enabled capabilities for..."
+  // --- SMART TEXT POLISHER ---
   function polishText(text: string, type: 'Feature' | 'Bug Fix'): string {
     let polished = text;
-    // Remove dev prefixes
     polished = polished.replace(/^(feat|fix|chore|refactor|docs)(\([^\)]+\))?:\s*/i, '');
-    // Snake case to normal
     polished = polished.replace(/([a-z])_([a-z])/g, '$1 $2');
     
-    // Make verbs professional
     if (type === 'Bug Fix') {
        if (polished.match(/^fix(ed)?/i)) polished = polished.replace(/^fix(ed)?\s/i, 'Resolved stability issue with ');
        if (polished.match(/^correct(ed)?/i)) polished = polished.replace(/^correct(ed)?\s/i, 'Rectified data discrepancy in ');
@@ -132,36 +136,51 @@ export default function Page() {
     });
 
     // 2. Group by Wednesday
-    const groups: Record<string, ReleaseItem[]> = {};
+    const groups: Record<string, {items: ReleaseItem[], versions: Set<string>}> = {};
+    
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
       const key = format(cycleDate, 'yyyy-MM-dd');
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(item);
+      
+      if (!groups[key]) groups[key] = { items: [], versions: new Set() };
+      
+      groups[key].items.push(item);
+      if (item.version) groups[key].versions.add(item.version);
     });
 
     const result: ReleaseGroup[] = Object.keys(groups)
       .sort((a, b) => b.localeCompare(a)) 
       .map((dateKey) => {
-        const dateObj = parseISO(dateKey);
-        const prevThurs = new Date(dateObj);
-        prevThurs.setDate(dateObj.getDate() - 6);
+        const cycleDateObj = parseISO(dateKey);
+        const prevThurs = new Date(cycleDateObj);
+        prevThurs.setDate(cycleDateObj.getDate() - 6);
+
+        // Logic: Is this week "In Progress"?
+        // If the Cycle Date (Wednesday) is in the future relative to NOW, it's in progress.
+        // OR if today is the cycle date but day isn't over (simplification: just use isFuture or isToday)
+        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === dateKey);
+
+        // Logic: Production Date = Cycle Date (Wed) + 8 Days (Next Thursday)
+        const prodDate = addDays(cycleDateObj, 8);
+
         return {
           id: dateKey,
           date: dateKey,
-          headline: `${format(prevThurs, 'MMM d')} – ${format(dateObj, 'MMM d')}`,
-          items: groups[dateKey],
+          headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
+          versions: Array.from(groups[dateKey].versions).sort().reverse(),
+          items: groups[dateKey].items,
+          isCurrentWeek: isCurrent,
+          productionDate: format(prodDate, 'EEE, MMM d'),
         };
       });
     setGroupedWeeks(result);
   }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // --- RENDER HELPER: SUMMARY SECTION ---
+  // --- RENDER HELPER ---
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
     
-    // Group Connectors specifically
     if (title === 'Global Connectivity') {
         const byConnector: Record<string, ReleaseItem[]> = {};
         items.forEach(item => {
@@ -289,7 +308,7 @@ export default function Page() {
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">TO</label>
-                  <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40 rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-sky-500 [color-scheme:light] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:[color-scheme:dark]" />
+                  <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40 rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-sky-500 [color-scheme:light] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:[color-scheme:dark]" />
                 </div>
               </div>
             </div>
@@ -308,14 +327,40 @@ export default function Page() {
                   {/* Timeline line */}
                   <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
-                  <div className="mb-6 flex items-baseline gap-4">
-                     <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
-                     <span className="text-sm font-mono text-slate-500">{week.date}</span>
+                  {/* WEEK HEADER */}
+                  <div className="mb-6">
+                      <div className="flex items-baseline gap-4 mb-2">
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
+                        <span className="text-sm font-mono text-slate-500">{week.date}</span>
+                      </div>
+                      
+                      {/* NEW: Version Badges + In Progress + Production Note */}
+                      <div className="flex flex-wrap items-center gap-3">
+                         {/* In Progress Label */}
+                         {week.isCurrentWeek && (
+                             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
+                                <Clock size={10} /> In Progress
+                             </span>
+                         )}
+                         
+                         {/* Versions */}
+                         {week.versions.map(v => (
+                             <span key={v} className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-xs font-mono font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                {v}
+                             </span>
+                         ))}
+
+                         {/* Production Note */}
+                         <span className="flex items-center gap-1.5 text-xs text-slate-500 ml-2">
+                             <Rocket size={12} />
+                             Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
+                         </span>
+                      </div>
                   </div>
 
                   <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
                      
-                     {/* RENDER VIEW 1: EXECUTIVE SUMMARY (Regex Polished) */}
+                     {/* RENDER VIEW 1: EXECUTIVE SUMMARY */}
                      {viewMode === 'summary' && (
                         <div>
                            {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
@@ -331,7 +376,7 @@ export default function Page() {
                         </div>
                      )}
 
-                     {/* RENDER VIEW 2: LIST VIEW (Raw Data) */}
+                     {/* RENDER VIEW 2: LIST VIEW */}
                      {viewMode === 'list' && (
                         <ul className="space-y-4">
                            {week.items.map((item, idx) => (
