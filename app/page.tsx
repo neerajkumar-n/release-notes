@@ -39,14 +39,14 @@ type ReleaseItem = {
 };
 
 type ReleaseWeek = {
-  id: string; // YYYY-MM-DD
+  id: string; 
   date: string;
   headline: string;
   items: ReleaseItem[];
 };
 
 type ReleaseGroup = {
-  id: string; // Wednesday Date
+  id: string; 
   date: string;
   headline: string;
   releaseVersion: string | null;
@@ -58,7 +58,6 @@ type ReleaseGroup = {
   hasFailed?: boolean;
 };
 
-// Skeleton for the Executive Summary View
 const SummarySkeleton = () => (
   <div className="animate-pulse space-y-8">
     <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
@@ -104,9 +103,9 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- CLIENT-SIDE CHUNKING (Solves Timeouts) ---
+  // --- THE CHUNKING LOGIC ---
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
-    const CACHE_KEY = 'hyperswitch_summary_cache_v7'; // Bump version to clear any bad data
+    const CACHE_KEY = 'hyperswitch_summary_cache_v8'; // New version
     
     let cachedData: Record<string, string> = {};
     try {
@@ -139,14 +138,16 @@ export default function Page() {
 
     for (const week of missingWeeks) {
       try {
-        // 1. CHUNK IT UP (15 items per chunk)
-        const CHUNK_SIZE = 15;
+        // 1. SPLIT ITEMS INTO CHUNKS OF 10
+        // This is where we break it down. 20 items become 2 calls of 10.
+        const CHUNK_SIZE = 10;
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
             chunks.push(week.items.slice(i, i + CHUNK_SIZE));
         }
 
-        // 2. PARALLEL REQUESTS
+        // 2. PARALLEL EXECUTION
+        // We fire all chunks at once. They run in parallel, saving time.
         const chunkPromises = chunks.map(chunkItems => 
             fetch('/api/generate-summary', {
                 method: 'POST',
@@ -163,14 +164,13 @@ export default function Page() {
 
         const results = await Promise.all(chunkPromises);
         
-        // 3. COMBINE
+        // 3. STITCH THE RESULTS
         const combinedFragments = results.map(r => r.summaryFragment).join('');
         
-        // Wrap in Layout
         const finalHtml = `
           <div class="space-y-4">
             <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
-              <h3 class="text-base font-bold text-slate-900 dark:text-white mb-4 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 pb-2">
+              <h3 class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 border-b border-slate-200 dark:border-slate-700 pb-2">
                 Executive Summary
               </h3>
               <ul class="space-y-3 pl-2 list-none">
@@ -178,7 +178,7 @@ export default function Page() {
               </ul>
             </div>
             <p class="text-[10px] text-center text-slate-400 opacity-60 font-mono mt-2">
-                Analysis of ${week.items.length} updates
+                Processed ${week.items.length} updates in ${chunks.length} batches
             </p>
           </div>
         `;
@@ -206,7 +206,7 @@ export default function Page() {
     }
   }, [generatingIds, failedIds]);
 
-  // --- GROUPING LOGIC (Anti-Duplicate) ---
+  // --- GROUPING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -218,7 +218,6 @@ export default function Page() {
 
     const allItemsFlat = allParsedWeeks.flatMap(w => w.items);
     
-    // Group strictly by Wednesday Cycle
     const groups: Record<string, ReleaseItem[]> = {};
     const versions: Record<string, string> = {};
 
@@ -313,7 +312,6 @@ export default function Page() {
               </div>
           </section>
 
-          {/* FILTERS */}
           <section className="mb-10 p-5 rounded-2xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900/50 shadow-sm">
             <div className="grid gap-5 md:grid-cols-[1fr_200px_auto]">
               <div>
@@ -350,7 +348,6 @@ export default function Page() {
             </div>
           </section>
 
-          {/* CONTENT */}
           <section className="min-h-[400px]">
             {loading ? (
                  <div className="flex flex-col items-center justify-center py-20 opacity-50">
@@ -397,15 +394,18 @@ export default function Page() {
                                     <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
                                         <AlertCircle className="text-red-500 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
-                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry</button>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
+                                        <div className="flex gap-4">
+                                            <button onClick={() => setViewMode('list')} className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">View Raw List</button>
+                                            <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
+                                        </div>
                                     </div>
                                 ) : (
                                     <>
                                         {week.isGenerating && (
                                             <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
                                                 <Sparkles size={16} />
-                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates...</span>
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
                                             </div>
                                         )}
                                         <SummarySkeleton />
