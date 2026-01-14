@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
+  ChevronDown,
   Moon,
   Sun,
   List,
@@ -54,13 +55,17 @@ type ReleaseGroup = {
   productionDate: string;
   aiSummary?: string;
   isGenerating?: boolean;
-  hasFailed?: boolean; // New field for error state
+  hasFailed?: boolean;
 };
 
 // Skeleton for the Executive Summary View
 const SummarySkeleton = () => (
   <div className="animate-pulse space-y-8">
     <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
+    <div className="space-y-4">
+      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
+      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
+    </div>
     <div className="space-y-4">
       <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
       <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
@@ -120,7 +125,6 @@ export default function Page() {
     } catch (e) { console.error(e); }
 
     // 2. Identify missing summaries
-    // We filter out weeks that are already generating OR have failed (unless forcing retry)
     const missingWeeks = weeksToProcess.filter(w => 
       !cachedData[w.id] && 
       !generatingIds.has(w.id) && 
@@ -172,7 +176,6 @@ export default function Page() {
         }
       } catch (e) {
         console.error(`Error summarizing week ${week.id}`, e);
-        // Mark as failed to stop the infinite loop
         setFailedIds(prev => {
           const next = new Set(prev);
           next.add(week.id);
@@ -213,9 +216,11 @@ export default function Page() {
        const filteredItems = week.items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
+           
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
+           
            return true;
        });
 
