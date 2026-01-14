@@ -6,6 +6,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_BASE_URL || 'https://grid.ai.juspay.net',
 });
 
+// Even though we aim for speed, we set this for Pro users
 export const maxDuration = 30; 
 export const runtime = 'nodejs';
 
@@ -14,91 +15,56 @@ export async function POST(req: Request) {
     const { items, weekDate } = await req.json();
 
     if (!items || items.length === 0) {
-      return NextResponse.json({ summary: "<p>No items to summarize.</p>" });
+      return NextResponse.json({ summaryFragment: "" });
     }
 
-    // 1. BATCHING
-    const BATCH_SIZE = 15; // Increased slightly for efficiency
-    const batches = [];
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      batches.push(items.slice(i, i + BATCH_SIZE));
-    }
+    // STRICT SAFETY: If the client sends too many, we slice to prevent timeout
+    const safeItems = items.slice(0, 15); 
 
-    // 2. PROMPT WITH EXTRACTION TAGS
-    const generatePrompt = (batchItems: any[]) => {
-      const list = batchItems.map((i: any) => `- ${i.title} (PR #${i.prNumber})`).join('\n');
-      return `
-        Analyze these Hyperswitch PRs for the week of ${weekDate}.
-        
-        Generate concise HTML <li> items summarizing the business value.
-        Group into: **Highlights**, **Connectors**, or **Core**.
-        
-        IMPORTANT: You may "think" out loud, but you MUST wrap your final HTML output inside <RESULT> tags.
-        
-        Example Output:
-        <RESULT>
-        <li class="text-sm mb-1"><strong class="text-slate-700 dark:text-slate-200">Connectors</strong>: Added support for X <span class="opacity-50 text-xs">#123</span></li>
-        </RESULT>
-        
-        Input Data:
-        ${list}
-      `;
-    };
+    const list = safeItems.map((i: any) => `- ${i.title} (PR #${i.prNumber})`).join('\n');
 
-    // 3. PARALLEL EXECUTION
-    const modelId = process.env.AI_MODEL_ID || 'glm-latest';
-    
-    const results = await Promise.all(batches.map(async (batch) => {
-        try {
-            const completion = await openai.chat.completions.create({
-                model: modelId,
-                messages: [
-                    { role: 'system', content: 'You are a strict HTML generator.' },
-                    { role: 'user', content: generatePrompt(batch) }
-                ],
-                temperature: 0.3,
-                max_tokens: 1000, 
-            });
-            
-            const rawContent = completion.choices[0]?.message?.content || '';
-            
-            // 4. THE CLEANING REGEX (Removes "Thinking")
-            // This looks for <RESULT>...content...</RESULT> and grabs the content.
-            const match = rawContent.match(/<RESULT>([\s\S]*?)<\/RESULT>/i);
-            
-            if (match && match[1]) {
-                return match[1].trim();
-            }
-            
-            // Fallback: If AI forgot tags, try to strip code blocks
-            return rawContent.replace(/```html/g, '').replace(/```/g, '').trim();
-            
-        } catch (e) {
-            console.error('Batch failed', e);
-            return '';
-        }
-    }));
-
-    // 5. ASSEMBLE
-    let rawHtml = results.join('\n');
-
-    const finalHTML = `
-      <div class="space-y-4">
-        <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
-          <ul class="space-y-3 pl-2 list-none">
-            ${rawHtml}
-          </ul>
-        </div>
-        <p class="text-[10px] text-center text-slate-400 opacity-60 font-mono mt-2">
-            Summarized ${items.length} updates
-        </p>
-      </div>
+    const prompt = `
+      Analyze these Hyperswitch PRs (Week: ${weekDate}).
+      
+      OUTPUT FORMAT:
+      - Return ONLY HTML <li> tags.
+      - NO <br>, NO markdown, NO "Here is the list".
+      - Format: <li class="text-sm mb-1"><strong class="text-slate-700 dark:text-slate-200">[Category]</strong>: Summary <span class="opacity-50 text-xs">#PR</span></li>
+      - Categories: Highlights, Connectors, Core.
+      
+      Input:
+      ${list}
     `;
 
-    return NextResponse.json({ summary: finalHTML });
+    // Force "glm-latest" or your env model
+    const modelId = process.env.AI_MODEL_ID || 'glm-latest';
+
+    const completion = await openai.chat.completions.create({
+      model: modelId,
+      messages: [
+        { role: 'system', content: 'You are a strict HTML generator.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 600,
+    });
+
+    const rawContent = completion.choices[0]?.message?.content || '';
+    
+    // Clean up "Thinking" or Code Blocks
+    // We look for the first <li> and take everything after it
+    let cleanHtml = rawContent;
+    const listStartIndex = rawContent.indexOf('<li');
+    if (listStartIndex !== -1) {
+        cleanHtml = rawContent.substring(listStartIndex);
+    }
+    // Remove closing code blocks if present
+    cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
+
+    return NextResponse.json({ summaryFragment: cleanHtml });
 
   } catch (error: any) {
-    console.error('Summary Error:', error);
+    console.error('Summary Fragment Error:', error);
     return NextResponse.json({ error: 'Failed' }, { status: 500 });
   }
 }
