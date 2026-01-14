@@ -10,7 +10,8 @@ import {
   Loader2,
   Sparkles,
   Clock,
-  Rocket
+  Rocket,
+  ArrowDownCircle
 } from 'lucide-react';
 import {
   parseISO,
@@ -39,6 +40,13 @@ type ReleaseItem = {
   version: string | null;
 };
 
+type ReleaseWeek = {
+  id: string; // This is the Date string YYYY-MM-DD
+  date: string;
+  headline: string;
+  items: ReleaseItem[];
+};
+
 type ReleaseGroup = {
   id: string;
   date: string;
@@ -56,8 +64,16 @@ type SummaryCategory =
   | 'Merchant Experience';
 
 export default function Page() {
-  const [allItems, setAllItems] = useState<ReleaseItem[]>([]);
+  // MASTER DATA (The whole changelog)
+  const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
+  
+  // PAGINATION STATE (How many weeks to show)
+  const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
+
+  // ACTIVE DISPLAY DATA
+  const [displayedItems, setDisplayedItems] = useState<ReleaseItem[]>([]);
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
+  
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
@@ -95,13 +111,13 @@ export default function Page() {
     setLoading(true);
     try {
       const res = await fetch('/api/release-notes');
+      const rawWeeks: ReleaseWeek[] = await res.json();
       
-      const weeksData = await res.json();
-      const flatItems: ReleaseItem[] = [];
-      weeksData.forEach((week: any) => {
-        week.items.forEach((item: ReleaseItem) => flatItems.push(item));
-      });
-      setAllItems(flatItems);
+      // 1. STRICT SORT: Ensure weeks are Newest (Today) -> Oldest
+      // We sort by the ID (which is YYYY-MM-DD string) in descending order
+      rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
+
+      setAllParsedWeeks(rawWeeks);
     } catch (e) {
       console.error('Fetch error:', e);
     } finally {
@@ -113,7 +129,42 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- BACKGROUND ENHANCEMENT WITH LOCALSTORAGE CACHE ---
+  // --- DERIVE VISIBLE DATA (Pagination + Filtering) ---
+  useEffect(() => {
+    if (allParsedWeeks.length === 0) return;
+
+    // 1. Slice: Only take the number of weeks allowed by pagination
+    // e.g., First 2 weeks, then 4 weeks...
+    const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
+
+    // 2. Flatten: Convert weeks back to items list for filtering/enhancement
+    const currentItems: ReleaseItem[] = [];
+    slicedWeeks.forEach(week => {
+      // Important: Ensure we preserve any enhancement data if it exists in state
+      // This is handled by the enhancement loop updating `displayedItems`
+      // But initially, we grab from raw weeks.
+      currentItems.push(...week.items);
+    });
+
+    // 3. Update the items being "Watched" by the UI and AI
+    // We only update if length changed to avoid resetting enhanced data loop
+    // Note: The actual enhancement persistence is handled in the `enhanceInBackground` 
+    // merging logic, so here we can just set the base items.
+    
+    // However, to keep enhancements, we need to merge with existing `displayedItems`
+    setDisplayedItems(prevItems => {
+        const newItems = [...currentItems];
+        // Merge existing enhancements into the new slice
+        return newItems.map(newItem => {
+            const existing = prevItems.find(p => p.title === newItem.title && p.prNumber === newItem.prNumber);
+            return existing ? existing : newItem;
+        });
+    });
+
+  }, [allParsedWeeks, visibleWeeksCount]);
+
+
+  // --- BACKGROUND ENHANCEMENT ---
   const enhanceInBackground = useCallback(async () => {
     const CACHE_KEY = 'hyperswitch_enhanced_cache_v1';
     
@@ -128,10 +179,11 @@ export default function Page() {
     const itemsToFetch: ReleaseItem[] = [];
     let stateUpdatedFromCache = false;
 
-    const currentItemsWithCache = allItems.map(item => {
+    // We check `displayedItems` (the current page slice)
+    const currentItemsWithCache = displayedItems.map(item => {
         const key = `${item.title}-${item.prNumber}`;
         if (cachedData[key]) {
-            // Apply cache
+            // Apply cache if missing
             if (!item.enhancedTitle) {
                 stateUpdatedFromCache = true;
                 return {
@@ -142,14 +194,14 @@ export default function Page() {
                 };
             }
         } else if (!item.enhancedTitle) {
-            // Needs fetching
+            // Needs fetching (and not in cache)
             itemsToFetch.push(item);
         }
         return item;
     });
 
     if (stateUpdatedFromCache) {
-        setAllItems(currentItemsWithCache);
+        setDisplayedItems(currentItemsWithCache);
     }
 
     if (itemsToFetch.length === 0) return;
@@ -159,7 +211,7 @@ export default function Page() {
     setTotalToEnhance(itemsToFetch.length);
     setEnhancedCount(0);
 
-    const batchSize = 5;
+    constQN = 5; // Batch size
     let processed = 0;
 
     for (let i = 0; i < itemsToFetch.length; i += batchSize) {
@@ -173,7 +225,7 @@ export default function Page() {
         const data = await res.json();
 
         if (data.items) {
-          setAllItems(prev => {
+          setDisplayedItems(prev => {
             const updated = [...prev];
             data.items.forEach((enhanced: ReleaseItem) => {
               const idx = updated.findIndex(item => item.title === enhanced.title && item.prNumber === enhanced.prNumber);
@@ -202,29 +254,24 @@ export default function Page() {
     }
 
     setEnhancing(false);
-  }, [allItems]);
+  }, [displayedItems]); // Dependencies: run when displayed items change
 
-  // Auto-start enhancement when data loads
+  // Auto-start enhancement when items change (e.g. Load More clicked)
   useEffect(() => {
-    if (allItems.length > 0 && !enhancing) {
+    if (displayedItems.length > 0 && !enhancing) {
       const timer = setTimeout(() => {
         enhanceInBackground();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [allItems.length, enhancing, enhanceInBackground]);
+  }, [displayedItems.length, enhancing, enhanceInBackground]);
 
-  // --- DERIVED DATA ---
-  const connectors = useMemo(() => {
-    const set = new Set<string>();
-    allItems.forEach((item) => { if (item.connector) set.add(item.connector); });
-    return Array.from(set).sort();
-  }, [allItems]);
 
-  // --- FILTER & GROUP ---
+  // --- GROUPING & DISPLAY LOGIC ---
+  // This runs on `displayedItems` to group them by week for rendering
   useEffect(() => {
     // 1. Filter
-    const filteredItems = allItems.filter((item) => {
+    const filteredItems = displayedItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
       if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -238,21 +285,19 @@ export default function Page() {
     
     filteredItems.forEach((item) => {
       const releaseDate = parseISO(item.originalDate);
-      
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
       const key = format(cycleDate, 'yyyy-MM-dd');
       
       if (!groups[key]) groups[key] = { items: [], version: null };
       
       groups[key].items.push(item);
-
       if (item.version && isSameDay(releaseDate, cycleDate)) {
         groups[key].version = item.version;
       }
     });
 
     const result: ReleaseGroup[] = Object.keys(groups)
-      .sort((a, b) => b.localeCompare(a)) 
+      .sort((a, b) => b.localeCompare(a)) // Ensure sorting happens here too
       .map((dateKey) => {
         const cycleDateObj = parseISO(dateKey);
         const prevThurs = new Date(cycleDateObj);
@@ -272,9 +317,17 @@ export default function Page() {
         };
       });
     setGroupedWeeks(result);
-  }, [allItems, connectorFilter, typeFilter, fromDate, toDate]);
+  }, [displayedItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // --- RENDER HELPER ---
+  // --- CONNECTORS LIST ---
+  const connectors = useMemo(() => {
+    const set = new Set<string>();
+    displayedItems.forEach((item) => { if (item.connector) set.add(item.connector); });
+    return Array.from(set).sort();
+  }, [displayedItems]);
+
+
+  // --- RENDER HELPERS ---
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
 
@@ -360,6 +413,8 @@ export default function Page() {
     );
   };
 
+  const hasMore = visibleWeeksCount < allParsedWeeks.length;
+
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 font-sans selection:bg-sky-500/30 transition-colors duration-300">
@@ -373,12 +428,12 @@ export default function Page() {
                   </h1>
                   <div className="flex items-center gap-3">
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Weekly updates tracked from GitHub Changelog.
+                        Updates from {allParsedWeeks.length > 0 ? format(parseISO(allParsedWeeks[0].date), 'MMMM yyyy') : '...'}
                     </p>
                     {enhancing && (
                       <div className="flex items-center gap-2 text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-2 py-1 rounded-full">
                         <Sparkles size={12} className="animate-spin" />
-                        <span>Enhancing {enhancedCount}/{totalToEnhance}...</span>
+                        <span>Enhancing new items ({enhancedCount}/{totalToEnhance})...</span>
                       </div>
                     )}
                   </div>
@@ -447,100 +502,120 @@ export default function Page() {
 
           {/* --- CONTENT AREA --- */}
           <section className="min-h-[400px]">
-            {groupedWeeks.length === 0 && !loading && (
+            {loading ? (
+                 <div className="flex flex-col items-center justify-center py-20 opacity-50">
+                    <Loader2 className="animate-spin mb-3" size={32} />
+                    <p>Fetching release history...</p>
+                 </div>
+            ) : groupedWeeks.length === 0 ? (
                <div className="text-center py-20 border border-dashed border-gray-300 rounded-2xl dark:border-slate-800 opacity-60">
                  <p className="text-lg text-slate-500">No release notes found for these filters.</p>
                </div>
-            )}
+            ) : (
+                <>
+                {groupedWeeks.map((week) => (
+                <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
+                    {/* Timeline line */}
+                    <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
-            {groupedWeeks.map((week) => (
-               <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
-                 {/* Timeline line */}
-                 <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
-
-                 {/* WEEK HEADER */}
-                 <div className="mb-6">
-                     <div className="flex items-baseline gap-4 mb-3">
-                       <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
-                       <span className="text-base font-mono text-slate-500">{week.date}</span>
-                     </div>
-                     
-                     <div className="flex flex-wrap items-center gap-4">
-                         {week.isCurrentWeek && (
-                             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
-                                <Clock size={12} /> In Progress
-                             </span>
-                         )}
-                         
-                         {week.releaseVersion && (
-                             <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
-                                {week.releaseVersion}
-                             </span>
-                         )}
-
-                         <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
-                             <Rocket size={14} />
-                             Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
-                         </span>
-                     </div>
-                 </div>
-
-                 <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                     
-                     {/* EXECUTIVE VIEW */}
-                     {viewMode === 'summary' && (
-                        <div>
-                           {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
-                           <div className="grid md:grid-cols-2 gap-x-16 gap-y-8">
-                             <div>
-                                 {renderSummarySection('Merchant Experience', week.items.filter(i => getCategory(i) === 'Merchant Experience'))}
-                                 {renderSummarySection('Security & Governance', week.items.filter(i => getCategory(i) === 'Security & Governance'))}
-                             </div>
-                             <div>
-                                 {renderSummarySection('Core Platform & Reliability', week.items.filter(i => getCategory(i) === 'Core Platform & Reliability'))}
-                             </div>
-                           </div>
+                    {/* WEEK HEADER */}
+                    <div className="mb-6">
+                        <div className="flex items-baseline gap-4 mb-3">
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
+                        <span className="text-base font-mono text-slate-500">{week.date}</span>
                         </div>
-                     )}
+                        
+                        <div className="flex flex-wrap items-center gap-4">
+                            {week.isCurrentWeek && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
+                                    <Clock size={12} /> In Progress
+                                </span>
+                            )}
+                            
+                            {week.releaseVersion && (
+                                <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                                    {week.releaseVersion}
+                                </span>
+                            )}
 
-                     {/* LIST VIEW */}
-                     {viewMode === 'list' && (
-                        <ul className="space-y-5">
-                           {week.items.map((item, idx) => (
-                              <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
-                                 <div className="flex items-start gap-3">
-                                    <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                        {item.type === 'Feature' ? 'FEAT' : 'FIX'}
-                                    </span>
-                                    <div className="flex-1">
-                                       <p className="font-medium text-slate-800 dark:text-slate-200">
-                                          {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
-                                          {item.enhancedTitle || item.title}
-                                       </p>
-                                       {item.description && (
-                                          <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
-                                             {item.description}
-                                          </p>
-                                       )}
-                                       {item.businessImpact && (
-                                          <p className="text-xs text-sky-600 dark:text-sky-400 italic mt-1">
-                                             {item.businessImpact}
-                                          </p>
-                                       )}
-                                       {item.prNumber && (
-                                          <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 mt-1 inline-block">
-                                             #{item.prNumber}
-                                          </a>
-                                       )}
+                            <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
+                                <Rocket size={14} />
+                                Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+                        
+                        {/* EXECUTIVE VIEW */}
+                        {viewMode === 'summary' && (
+                            <div>
+                            {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
+                            <div className="grid md:grid-cols-2 gap-x-16 gap-y-8">
+                                <div>
+                                    {renderSummarySection('Merchant Experience', week.items.filter(i => getCategory(i) === 'Merchant Experience'))}
+                                    {renderSummarySection('Security & Governance', week.items.filter(i => getCategory(i) === 'Security & Governance'))}
+                                </div>
+                                <div>
+                                    {renderSummarySection('Core Platform & Reliability', week.items.filter(i => getCategory(i) === 'Core Platform & Reliability'))}
+                                </div>
+                            </div>
+                            </div>
+                        )}
+
+                        {/* LIST VIEW */}
+                        {viewMode === 'list' && (
+                            <ul className="space-y-5">
+                            {week.items.map((item, idx) => (
+                                <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
+                                    <div className="flex items-start gap-3">
+                                        <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                            {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                        </span>
+                                        <div className="flex-1">
+                                        <p className="font-medium text-slate-800 dark:text-slate-200">
+                                            {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
+                                            {item.enhancedTitle || item.title}
+                                        </p>
+                                        {item.description && (
+                                            <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
+                                                {item.description}
+                                            </p>
+                                        )}
+                                        {item.businessImpact && (
+                                            <p className="text-xs text-sky-600 dark:text-sky-400 italic mt-1">
+                                                {item.businessImpact}
+                                            </p>
+                                        )}
+                                        {item.prNumber && (
+                                            <a href={item.prUrl} target="_blank" className="text-xs text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 mt-1 inline-block">
+                                                #{item.prNumber}
+                                            </a>
+                                        )}
+                                        </div>
                                     </div>
-                                 </div>
-                              </li>
-                           ))}
-                        </ul>
-                     )}
-                 </div>
-              </div>
-            ))}
+                                </li>
+                            ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+                ))}
+                
+                {/* PAGINATION BUTTON */}
+                {hasMore && (
+                    <div className="flex justify-center mt-8 mb-12">
+                        <button
+                            onClick={() => setVisibleWeeksCount(prev => prev + 2)}
+                            className="group flex flex-col items-center gap-2 text-slate-500 hover:text-sky-600 transition-colors"
+                        >
+                            <span className="text-sm font-semibold tracking-widest uppercase">Load Previous Weeks</span>
+                            <ArrowDownCircle size={32} className="group-hover:translate-y-1 transition-transform" />
+                        </button>
+                    </div>
+                )}
+                </>
+            )}
           </section>
         </main>
       </div>
