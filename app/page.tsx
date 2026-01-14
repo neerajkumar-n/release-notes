@@ -43,7 +43,7 @@ type ReleaseGroup = {
   id: string;
   date: string;
   headline: string;
-  releaseVersion: string | null; // <--- Changed to Single Version
+  releaseVersion: string | null;
   items: ReleaseItem[];
   isCurrentWeek: boolean;
   productionDate: string;
@@ -61,7 +61,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // VIEW STATE: 'summary' = Executive View, 'list' = Detailed List View
+  // VIEW STATE
   const [viewMode, setViewMode] = useState<'summary' | 'list'>('summary');
 
   // Enhancement state
@@ -74,23 +74,6 @@ export default function Page() {
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
-
-  // --- SMART TEXT POLISHER ---
-  function polishText(text: string, type: 'Feature' | 'Bug Fix'): string {
-    let polished = text;
-    polished = polished.replace(/^(feat|fix|chore|refactor|docs)(\([^\)]+\))?:\s*/i, '');
-    polished = polished.replace(/([a-z])_([a-z])/g, '$1 $2');
-    
-    if (type === 'Bug Fix') {
-       if (polished.match(/^fix(ed)?/i)) polished = polished.replace(/^fix(ed)?\s/i, 'Resolved stability issue with ');
-       if (polished.match(/^correct(ed)?/i)) polished = polished.replace(/^correct(ed)?\s/i, 'Rectified data discrepancy in ');
-    } else {
-       if (polished.match(/^add(ed)?/i)) polished = polished.replace(/^add(ed)?\s(support for\s)?/i, 'Enabled capabilities for ');
-       if (polished.match(/^implement(ed)?/i)) polished = polished.replace(/^implement(ed)?\s/i, 'Launched new ');
-       if (polished.match(/^update(ed)?/i)) polished = polished.replace(/^update(ed)?\s/i, 'Enhanced ');
-    }
-    return polished.charAt(0).toUpperCase() + polished.slice(1);
-  }
 
   // --- CATEGORIZATION LOGIC ---
   function getCategory(item: ReleaseItem): SummaryCategory {
@@ -111,15 +94,12 @@ export default function Page() {
     console.log('Fetching data...');
     setLoading(true);
     try {
-      const res = await fetch('/api/release-notes');
-      console.log('Response status:', res.status);
+      constCc = await fetch('/api/release-notes');
       const weeksData = await res.json();
-      console.log('Received weeks:', weeksData.length);
       const flatItems: ReleaseItem[] = [];
       weeksData.forEach((week: any) => {
         week.items.forEach((item: ReleaseItem) => flatItems.push(item));
       });
-      console.log('Total items:', flatItems.length);
       setAllItems(flatItems);
     } catch (e) {
       console.error('Fetch error:', e);
@@ -129,24 +109,64 @@ export default function Page() {
   }
 
   useEffect(() => {
-    console.log('Component mounted, calling fetchData');
     fetchData();
   }, []);
 
-  // --- BACKGROUND ENHANCEMENT ---
+  // --- BACKGROUND ENHANCEMENT WITH LOCALSTORAGE CACHE ---
   const enhanceInBackground = useCallback(async () => {
-    const itemsToEnhance = allItems.filter(item => !item.enhancedTitle);
-    if (itemsToEnhance.length === 0) return;
+    const CACHE_KEY = 'hyperswitch_enhanced_cache_v1';
+    
+    // 1. Load Cache
+    let cachedData: Record<string, any> = {};
+    try {
+      const stored = localStorage.getItem(CACHE_KEY);
+      if (stored) cachedData = JSON.parse(stored);
+    } catch (e) { console.error('Cache read error', e); }
 
+    // 2. Identify items that need enhancement
+    // If they are in cache, update them immediately locally
+    // If not, mark them for fetching
+    const itemsToFetch: ReleaseItem[] = [];
+    let stateUpdatedFromCache = false;
+
+    // We create a copy to mutate safely if needed (though we rely on setAllItems)
+    const currentItemsWithCache = allItems.map(item => {
+        const key = `${item.title}-${item.prNumber}`;
+        if (cachedData[key]) {
+            // Apply cache
+            if (!item.enhancedTitle) {
+                stateUpdatedFromCache = true;
+                return {
+                    ...item,
+                    enhancedTitle: cachedData[key].enhancedTitle,
+                    description: cachedData[key].description,
+                    businessImpact: cachedData[key].businessImpact
+                };
+            }
+        } else if (!item.enhancedTitle) {
+            // Needs fetching
+            itemsToFetch.push(item);
+        }
+        return item;
+    });
+
+    // If we applied cache, update state immediately
+    if (stateUpdatedFromCache) {
+        setAllItems(currentItemsWithCache);
+    }
+
+    if (itemsToFetch.length === 0) return;
+
+    // 3. Process remaining items
     setEnhancing(true);
-    setTotalToEnhance(itemsToEnhance.length);
+    setTotalToEnhance(itemsToFetch.length);
     setEnhancedCount(0);
 
     const batchSize = 5;
     let processed = 0;
 
-    for (let i = 0; i < itemsToEnhance.length; i += batchSize) {
-      const batch = itemsToEnhance.slice(i, i + batchSize);
+    for (let i = 0; i < itemsToFetch.length; i += batchSize) {
+      const batch = itemsToFetch.slice(i, i + batchSize);
       try {
         const res = await fetch('/api/enhance-items', {
           method: 'POST',
@@ -156,16 +176,28 @@ export default function Page() {
         const data = await res.json();
 
         if (data.items) {
+          // Update State AND LocalStorage
           setAllItems(prev => {
             const updated = [...prev];
             data.items.forEach((enhanced: ReleaseItem) => {
               const idx = updated.findIndex(item => item.title === enhanced.title && item.prNumber === enhanced.prNumber);
               if (idx >= 0) {
                 updated[idx] = enhanced;
+                
+                // Write to cache object
+                const key = `${enhanced.title}-${enhanced.prNumber}`;
+                cachedData[key] = {
+                    enhancedTitle: enhanced.enhancedTitle,
+                    description: enhanced.description,
+                    businessImpact: enhanced.businessImpact
+                };
               }
             });
             return updated;
           });
+          
+          // Save to LocalStorage
+          localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData));
         }
       } catch (e) {
         console.error('Batch enhancement error:', e);
@@ -181,7 +213,6 @@ export default function Page() {
   // Auto-start enhancement when data loads
   useEffect(() => {
     if (allItems.length > 0 && !enhancing) {
-      // Small delay to let UI render first
       const timer = setTimeout(() => {
         enhanceInBackground();
       }, 500);
@@ -212,7 +243,7 @@ export default function Page() {
     const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
     
     filteredItems.forEach((item) => {
-      const releaseDate = parseISO(item.originalDate);
+      constQb = parseISO(item.originalDate);
       const cycleDate = isWednesday(releaseDate) ? releaseDate : nextWednesday(releaseDate);
       const key = format(cycleDate, 'yyyy-MM-dd');
       
@@ -220,8 +251,6 @@ export default function Page() {
       
       groups[key].items.push(item);
 
-      // LOGIC: Capture the version ONLY if this item's date matches the Wednesday Cycle Date
-      // This ensures we pick the "Release Day" version.
       if (item.version && isSameDay(releaseDate, cycleDate)) {
         groups[key].version = item.version;
       }
@@ -241,7 +270,7 @@ export default function Page() {
           id: dateKey,
           date: dateKey,
           headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-          releaseVersion: groups[dateKey].version, // Single version
+          releaseVersion: groups[dateKey].version,
           items: groups[dateKey].items,
           isCurrentWeek: isCurrent,
           productionDate: format(prodDate, 'EEE, MMM d'),
@@ -254,7 +283,6 @@ export default function Page() {
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
 
-    // Group Connectors specifically
     if (title === 'Global Connectivity') {
       const byConnector: Record<string, ReleaseItem[]> = {};
       items.forEach(item => {
@@ -275,7 +303,7 @@ export default function Page() {
                 <ul className="space-y-3">
                   {connectorItems.map((c, i) => (
                     <li key={i} className="text-sm">
-                      <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200WX block mb-1">
                         {c.enhancedTitle || c.title}
                       </span>
                       {c.description && (
@@ -342,7 +370,7 @@ export default function Page() {
       <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 font-sans selection:bg-sky-500/30 transition-colors duration-300">
         <main className="mx-auto max-w-6xl px-4 pb-20 pt-12">
           
-          {/* HEADER (Bigger Text) */}
+          {/* HEADER */}
           <section className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-gray-200 dark:border-slate-800 pb-8">
               <div>
                   <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mb-3">
@@ -432,66 +460,62 @@ export default function Page() {
 
             {groupedWeeks.map((week) => (
                <div key={week.id} className="mb-12 relative pl-8 md:pl-0">
-                  {/* Timeline line */}
-                  <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
+                 {/* Timeline line */}
+                 <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
 
-                  {/* WEEK HEADER */}
-                  <div className="mb-6">
-                      <div className="flex items-baseline gap-4 mb-3">
-                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
-                        <span className="text-base font-mono text-slate-500">{week.date}</span>
-                      </div>
-                      
-                      {/* NEW: SINGLE Version + In Progress + Production Note */}
-                      <div className="flex flex-wrap items-center gap-4">
-                         {/* In Progress Label */}
+                 {/* WEEK HEADER */}
+                 <div className="mb-6">
+                     <div className="flex items-baseline gap-4 mb-3">
+                       <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{week.headline}</h2>
+                       <span className="text-base font-mono text-slate-500">{week.date}</span>
+                     </div>
+                     
+                     <div className="flex flex-wrap items-center gap-4">
                          {week.isCurrentWeek && (
                              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-500/20">
                                 <Clock size={12} /> In Progress
                              </span>
                          )}
                          
-                         {/* Single Version (Only if it exists for Wednesday) */}
                          {week.releaseVersion && (
                              <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-sm font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
                                 {week.releaseVersion}
                              </span>
                          )}
 
-                         {/* Production Note */}
                          <span className="flex items-center gap-2 text-sm text-slate-500 ml-1">
                              <Rocket size={14} />
                              Live in Production: <span className="font-semibold text-sky-600 dark:text-sky-400">{week.productionDate}</span>
                          </span>
-                      </div>
-                  </div>
+                     </div>
+                 </div>
 
-                  <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+                 <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
                      
-                     {/* RENDER VIEW 1: EXECUTIVE SUMMARY (Regex Polished) */}
+                     {/* EXECUTIVE VIEW */}
                      {viewMode === 'summary' && (
                         <div>
                            {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
                            <div className="grid md:grid-cols-2 gap-x-16 gap-y-8">
-                              <div>
+                             <div>
                                  {renderSummarySection('Merchant Experience', week.items.filter(i => getCategory(i) === 'Merchant Experience'))}
                                  {renderSummarySection('Security & Governance', week.items.filter(i => getCategory(i) === 'Security & Governance'))}
-                              </div>
-                              <div>
+                             </div>
+                             <div>
                                  {renderSummarySection('Core Platform & Reliability', week.items.filter(i => getCategory(i) === 'Core Platform & Reliability'))}
-                              </div>
+                             </div>
                            </div>
                         </div>
                      )}
 
-                     {/* RENDER VIEW 2: LIST VIEW (Detailed with Descriptions) */}
+                     {/* LIST VIEW */}
                      {viewMode === 'list' && (
                         <ul className="space-y-5">
                            {week.items.map((item, idx) => (
                               <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
                                  <div className="flex items-start gap-3">
                                     <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                       {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                        {item.type === 'Feature' ? 'FEAT' : 'FIX'}
                                     </span>
                                     <div className="flex-1">
                                        <p className="font-medium text-slate-800 dark:text-slate-200">
@@ -519,8 +543,8 @@ export default function Page() {
                            ))}
                         </ul>
                      )}
-                  </div>
-               </div>
+                 </div>
+              </div>
             ))}
           </section>
         </main>
