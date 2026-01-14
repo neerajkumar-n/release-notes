@@ -46,7 +46,7 @@ type ReleaseWeek = {
 };
 
 type ReleaseGroup = {
-  id: string; // This will be the WEDNESDAY date string
+  id: string;
   date: string;
   headline: string;
   releaseVersion: string | null;
@@ -86,7 +86,6 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- FETCH MASTER DATA ---
   useEffect(() => {
     async function fetchData() {
       console.log('Fetching data...');
@@ -94,6 +93,7 @@ export default function Page() {
       try {
         const res = await fetch('/api/release-notes');
         const rawWeeks: ReleaseWeek[] = await res.json();
+        rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
         setAllParsedWeeks(rawWeeks);
       } catch (e) {
         console.error('Fetch error:', e);
@@ -104,9 +104,10 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- GENERATE SUMMARIES ---
+  // --- CLIENT-SIDE CHUNKING & ORCHESTRATION ---
+  // This solves the 10s timeout by breaking 1 big request into 5 small ones
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
-    const CACHE_KEY = 'hyperswitch_summary_cache_v5'; // Bump version to clear bad "thinking" cache
+    const CACHE_KEY = 'hyperswitch_summary_cache_v6';
     
     let cachedData: Record<string, string> = {};
     try {
@@ -137,30 +138,57 @@ export default function Page() {
       });
     }
 
+    // Process each week
     for (const week of missingWeeks) {
       try {
-        const res = await fetch('/api/generate-summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            items: week.items,
-            weekDate: week.date
-          })
-        });
+        // 1. SPLIT ITEMS INTO CHUNKS OF 15
+        // This ensures no single API call takes > 5 seconds
+        const CHUNK_SIZE = 15;
+        const chunks = [];
+        for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
+            chunks.push(week.items.slice(i, i + CHUNK_SIZE));
+        }
 
-        if (!res.ok) throw new Error(`API Error ${res.status}`);
+        // 2. PARALLEL REQUESTS FROM CLIENT
+        const chunkPromises = chunks.map(chunkItems => 
+            fetch('/api/generate-summary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    items: chunkItems,
+                    weekDate: week.date
+                })
+            }).then(res => {
+                if (!res.ok) throw new Error(`API Error ${res.status}`);
+                return res.json();
+            })
+        );
 
-        const data = await res.json();
+        const results = await Promise.all(chunkPromises);
         
-        if (data.summary) {
-          setSummaries(prev => {
-             const newVal = { ...prev, [week.id]: data.summary };
+        // 3. STITCH RESULTS
+        const combinedFragments = results.map(r => r.summaryFragment).join('');
+        
+        // Wrap in Final HTML Layout
+        const finalHtml = `
+          <div class="space-y-4">
+            <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
+              <ul class="space-y-3 pl-2 list-none">
+                ${combinedFragments}
+              </ul>
+            </div>
+            <p class="text-[10px] text-center text-slate-400 opacity-60 font-mono mt-2">
+                Summarized ${week.items.length} updates
+            </p>
+          </div>
+        `;
+
+        setSummaries(prev => {
+             const newVal = { ...prev, [week.id]: finalHtml };
              localStorage.setItem(CACHE_KEY, JSON.stringify(newVal));
              return newVal;
-          });
-        } else {
-          throw new Error('No summary returned');
-        }
+        });
+
       } catch (e) {
         console.error(`Error summarizing week ${week.id}`, e);
         setFailedIds(prev => {
@@ -178,62 +206,43 @@ export default function Page() {
     }
   }, [generatingIds, failedIds]);
 
-  // --- GROUPING LOGIC (The Duplicate Fix) ---
+  // --- GROUPING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
-    // 1. Helper: Get strictly the Wednesday Date String
     const getCycleId = (dateStr: string) => {
         const date = parseISO(dateStr);
-        // If it is Wednesday, use it. If not, find next Wednesday.
         const cycle = isWednesday(date) ? date : nextWednesday(date);
         return format(cycle, 'yyyy-MM-dd');
     };
 
-    // 2. Flatten EVERYTHING first
     const allItemsFlat = allParsedWeeks.flatMap(w => w.items);
     
-    // 3. Re-Group Aggressively by Cycle ID
-    const groupedByCycle = new Map<string, ReleaseItem[]>();
-    const versionMap = new Map<string, string>();
+    const groups: Record<string, ReleaseItem[]> = {};
+    const versions: Record<string, string> = {};
 
     allItemsFlat.forEach(item => {
         const cycleId = getCycleId(item.originalDate);
+        if (!groups[cycleId]) groups[cycleId] = [];
+        groups[cycleId].push(item);
         
-        if (!groupedByCycle.has(cycleId)) {
-            groupedByCycle.set(cycleId, []);
-        }
-        groupedByCycle.get(cycleId)?.push(item);
-
-        // Keep the "latest" version found for this cycle
-        // A simple string compare usually works for versions like 2026.01.14.1 > 2026.01.14.0
-        if (item.version) {
-            const currentVer = versionMap.get(cycleId);
-            if (!currentVer || item.version > currentVer) {
-                versionMap.set(cycleId, item.version);
-            }
+        if (item.version && !versions[cycleId]) {
+            versions[cycleId] = item.version;
         }
     });
 
-    // 4. Sort Keys (Newest First)
-    const sortedKeys = Array.from(groupedByCycle.keys()).sort((a, b) => b.localeCompare(a));
-    
-    // 5. Slice for Pagination
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
     const visibleKeys = sortedKeys.slice(0, visibleWeeksCount);
 
-    // 6. Map to UI Objects
     const mapped: ReleaseGroup[] = visibleKeys.map(key => {
-        const items = groupedByCycle.get(key) || [];
+        const items = groups[key];
         const cycleDateObj = parseISO(key);
-        
-        // Calculate headline dates
         const prevThurs = new Date(cycleDateObj);
         prevThurs.setDate(cycleDateObj.getDate() - 6);
         
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
-        // Apply Filters
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -247,7 +256,7 @@ export default function Page() {
             id: key,
             date: key,
             headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
-            releaseVersion: versionMap.get(key) || null,
+            releaseVersion: versions[key] || null,
             items: filteredItems,
             isCurrentWeek: isCurrent,
             productionDate: format(prodDate, 'EEE, MMM d'),
@@ -258,15 +267,12 @@ export default function Page() {
     });
 
     setGroupedWeeks(mapped);
-    
-    // Trigger AI
     generateSummariesForVisible(mapped);
 
   }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, generateSummariesForVisible]);
 
   const hasMore = visibleWeeksCount < (allParsedWeeks.length + 5);
 
-  // --- CONNECTORS LIST (Dynamic) ---
   const connectors = useMemo(() => {
     const uniqueConnectors = new Set<string>();
     allParsedWeeks.flatMap(w => w.items).forEach(i => {
@@ -280,7 +286,6 @@ export default function Page() {
       <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 font-sans selection:bg-sky-500/30 transition-colors duration-300">
         <main className="mx-auto max-w-5xl px-4 pb-20 pt-12">
           
-          {/* HEADER */}
           <section className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-gray-200 dark:border-slate-800 pb-8">
               <div>
                   <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mb-3">
@@ -293,29 +298,20 @@ export default function Page() {
 
               <div className="flex items-center gap-4">
                   <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
-                      <button
-                          onClick={() => setViewMode('summary')}
-                          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'summary' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}
-                      >
+                      <button onClick={() => setViewMode('summary')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'summary' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}>
                           <FileText size={16} /> EXECUTIVE
                       </button>
-                      <button
-                          onClick={() => setViewMode('list')}
-                          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}
-                      >
+                      <button onClick={() => setViewMode('list')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}>
                           <List size={16} /> LIST VIEW
                       </button>
                   </div>
-
                   <div className="h-8 w-px bg-gray-300 dark:bg-slate-800 mx-1"></div>
-
                   <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 rounded-full border border-gray-300 bg-white text-slate-500 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-white transition-all">
                     {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
                   </button>
               </div>
           </section>
 
-          {/* FILTERS */}
           <section className="mb-10 p-5 rounded-2xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900/50 shadow-sm">
             <div className="grid gap-5 md:grid-cols-[1fr_200px_auto]">
               <div>
@@ -323,9 +319,7 @@ export default function Page() {
                 <div className="relative">
                   <select value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} className="w-full appearance-none rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-base text-slate-700 focus:border-sky-500 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                     <option value="All">All Connectors</option>
-                    {connectors.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                    ))}
+                    {connectors.map((c) => (<option key={c} value={c}>{c}</option>))}
                   </select>
                   <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDown size={18} /></div>
                 </div>
@@ -354,7 +348,6 @@ export default function Page() {
             </div>
           </section>
 
-          {/* CONTENT */}
           <section className="min-h-[400px]">
             {loading ? (
                  <div className="flex flex-col items-center justify-center py-20 opacity-50">
@@ -390,8 +383,6 @@ export default function Page() {
                     </div>
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                        
-                        {/* EXECUTIVE VIEW */}
                         {viewMode === 'summary' && (
                             <>
                                 {week.aiSummary ? (
@@ -403,31 +394,15 @@ export default function Page() {
                                     <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
                                         <AlertCircle className="text-red-500 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
-                                        
-                                        <div className="flex gap-4">
-                                            <button 
-                                                onClick={() => setViewMode('list')}
-                                                className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                                            >
-                                                View Raw List
-                                            </button>
-                                            <button 
-                                                onClick={() => {
-                                                    generateSummariesForVisible([week], true);
-                                                }}
-                                                className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"
-                                            >
-                                                <RefreshCw size={14} /> Retry AI
-                                            </button>
-                                        </div>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
+                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry</button>
                                     </div>
                                 ) : (
                                     <>
                                         {week.isGenerating && (
                                             <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
                                                 <Sparkles size={16} />
-                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates...</span>
                                             </div>
                                         )}
                                         <SummarySkeleton />
@@ -436,12 +411,9 @@ export default function Page() {
                             </>
                         )}
 
-                        {/* LIST VIEW (Raw Data) */}
                         {viewMode === 'list' && (
                             <ul className="space-y-5">
-                            {week.items.length === 0 ? (
-                                <li className="text-slate-500 text-sm italic">No items match your filters for this week.</li>
-                            ) : (
+                            {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items.</li> : 
                                 week.items.map((item, idx) => (
                                     <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
                                         <div className="flex items-start gap-3">
@@ -460,20 +432,16 @@ export default function Page() {
                                         </div>
                                     </li>
                                 ))
-                            )}
+                            }
                             </ul>
                         )}
                     </div>
                 </div>
             ))}
             
-            {/* PAGINATION BUTTON */}
             {hasMore && (
                 <div className="flex justify-center mt-8 mb-12">
-                    <button
-                        onClick={() => setVisibleWeeksCount(prev => prev + 2)}
-                        className="group flex flex-col items-center gap-2 text-slate-500 hover:text-sky-600 transition-colors"
-                    >
+                    <button onClick={() => setVisibleWeeksCount(prev => prev + 2)} className="group flex flex-col items-center gap-2 text-slate-500 hover:text-sky-600 transition-colors">
                         <span className="text-sm font-semibold tracking-widest uppercase">Load Previous Weeks</span>
                         <ArrowDownCircle size={32} className="group-hover:translate-y-1 transition-transform" />
                     </button>
