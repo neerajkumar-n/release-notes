@@ -63,11 +63,18 @@ type SummaryCategory =
   | 'Core Platform & Reliability'
   | 'Merchant Experience';
 
+// --- NEW SKELETON COMPONENT FOR SMOOTH LOADING ---
+const SkeletonItem = () => (
+  <div className="animate-pulse flex flex-col gap-2 py-2">
+    <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-3/4"></div>
+    <div className="h-3 bg-slate-100 dark:bg-slate-800/50 rounded w-full"></div>
+    <div className="h-3 bg-slate-100 dark:bg-slate-800/50 rounded w-5/6"></div>
+  </div>
+);
+
 export default function Page() {
-  // MASTER DATA (The whole changelog)
+  // MASTER DATA
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
-  
-  // PAGINATION STATE (How many weeks to show)
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
 
   // ACTIVE DISPLAY DATA
@@ -114,7 +121,6 @@ export default function Page() {
       const rawWeeks: ReleaseWeek[] = await res.json();
       
       // 1. STRICT SORT: Ensure weeks are Newest (Today) -> Oldest
-      // We sort by the ID (which is YYYY-MM-DD string) in descending order
       rawWeeks.sort((a, b) => b.id.localeCompare(a.id));
 
       setAllParsedWeeks(rawWeeks);
@@ -129,23 +135,18 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- DERIVE VISIBLE DATA (Pagination + Filtering) ---
+  // --- DERIVE VISIBLE DATA ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
-    // 1. Slice: Only take the number of weeks allowed by pagination
     const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
-
-    // 2. Flatten: Convert weeks back to items list for filtering/enhancement
     const currentItems: ReleaseItem[] = [];
     slicedWeeks.forEach(week => {
       currentItems.push(...week.items);
     });
 
-    // 3. Update the items being "Watched" by the UI and AI
     setDisplayedItems(prevItems => {
         const newItems = [...currentItems];
-        // Merge existing enhancements into the new slice
         return newItems.map(newItem => {
             const existing = prevItems.find(p => p.title === newItem.title && p.prNumber === newItem.prNumber);
             return existing ? existing : newItem;
@@ -170,11 +171,9 @@ export default function Page() {
     const itemsToFetch: ReleaseItem[] = [];
     let stateUpdatedFromCache = false;
 
-    // We check `displayedItems` (the current page slice)
     const currentItemsWithCache = displayedItems.map(item => {
         const key = `${item.title}-${item.prNumber}`;
         if (cachedData[key]) {
-            // Apply cache if missing
             if (!item.enhancedTitle) {
                 stateUpdatedFromCache = true;
                 return {
@@ -185,7 +184,6 @@ export default function Page() {
                 };
             }
         } else if (!item.enhancedTitle) {
-            // Needs fetching (and not in cache)
             itemsToFetch.push(item);
         }
         return item;
@@ -202,7 +200,7 @@ export default function Page() {
     setTotalToEnhance(itemsToFetch.length);
     setEnhancedCount(0);
 
-    const batchSize = 5; // FIXED: Correctly defined batch size
+    const batchSize = 5; 
     let processed = 0;
 
     for (let i = 0; i < itemsToFetch.length; i += batchSize) {
@@ -245,9 +243,8 @@ export default function Page() {
     }
 
     setEnhancing(false);
-  }, [displayedItems]); // Dependencies: run when displayed items change
+  }, [displayedItems]); 
 
-  // Auto-start enhancement when items change (e.g. Load More clicked)
   useEffect(() => {
     if (displayedItems.length > 0 && !enhancing) {
       const timer = setTimeout(() => {
@@ -258,10 +255,8 @@ export default function Page() {
   }, [displayedItems.length, enhancing, enhanceInBackground]);
 
 
-  // --- GROUPING & DISPLAY LOGIC ---
-  // This runs on `displayedItems` to group them by week for rendering
+  // --- GROUPING LOGIC ---
   useEffect(() => {
-    // 1. Filter
     const filteredItems = displayedItems.filter((item) => {
       const itemDate = parseISO(item.originalDate);
       if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
@@ -271,7 +266,6 @@ export default function Page() {
       return true;
     });
 
-    // 2. Group by Wednesday
     const groups: Record<string, {items: ReleaseItem[], version: string | null}> = {};
     
     filteredItems.forEach((item) => {
@@ -288,7 +282,7 @@ export default function Page() {
     });
 
     const result: ReleaseGroup[] = Object.keys(groups)
-      .sort((a, b) => b.localeCompare(a)) // Ensure sorting happens here too
+      .sort((a, b) => b.localeCompare(a))
       .map((dateKey) => {
         const cycleDateObj = parseISO(dateKey);
         const prevThurs = new Date(cycleDateObj);
@@ -310,7 +304,6 @@ export default function Page() {
     setGroupedWeeks(result);
   }, [displayedItems, connectorFilter, typeFilter, fromDate, toDate]);
 
-  // --- CONNECTORS LIST ---
   const connectors = useMemo(() => {
     const set = new Set<string>();
     displayedItems.forEach((item) => { if (item.connector) set.add(item.connector); });
@@ -318,7 +311,7 @@ export default function Page() {
   }, [displayedItems]);
 
 
-  // --- RENDER HELPERS ---
+  // --- UPDATED RENDER HELPERS (With Skeletons) ---
   const renderSummarySection = (title: string, items: ReleaseItem[]) => {
     if (items.length === 0) return null;
 
@@ -340,24 +333,29 @@ export default function Page() {
               <div key={name} className="rounded-lg bg-white border border-slate-200 p-4 shadow-sm dark:bg-slate-800/40 dark:border-slate-700/50">
                 <span className="block mb-3 font-bold text-slate-800 dark:text-slate-100">{name}</span>
                 <ul className="space-y-3">
-                  {connectorItems.map((c, i) => (
-                    <li key={i} className="text-sm">
-                      <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
-                        {c.enhancedTitle || c.title}
-                      </span>
-                      {c.description && (
-                        <span className="text-slate-600 dark:text-slate-400 block mb-1">
-                          {c.description}
+                  {connectorItems.map((c, i) => {
+                    // UX FIX: If in Summary mode and not enhanced, show SKELETON
+                    if (!c.enhancedTitle) return <SkeletonItem key={i} />;
+                    
+                    return (
+                        <li key={i} className="text-sm">
+                        <span className="font-semibold text-slate-700 dark:text-slate-200 block mb-1">
+                            {c.enhancedTitle}
                         </span>
-                      )}
-                      {c.businessImpact && (
-                        <span className="text-xs text-emerald-600 dark:text-emerald-400 italic block">
-                          {c.businessImpact}
-                        </span>
-                      )}
-                      {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-[10px] text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
-                    </li>
-                  ))}
+                        {c.description && (
+                            <span className="text-slate-600 dark:text-slate-400 block mb-1">
+                            {c.description}
+                            </span>
+                        )}
+                        {c.businessImpact && (
+                            <span className="text-xs text-emerald-600 dark:text-emerald-400 italic block">
+                            {c.businessImpact}
+                            </span>
+                        )}
+                        {c.prNumber && <a href={c.prUrl} target="_blank" className="ml-1 text-[10px] text-slate-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 no-underline">↗</a>}
+                        </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
@@ -372,33 +370,38 @@ export default function Page() {
           {title}
         </h3>
         <ul className="space-y-4">
-          {items.map((item, idx) => (
-            <li key={idx} className="flex flex-col gap-1.5 text-sm group">
-              <div className="flex items-start gap-3">
-                <span className="text-slate-400 dark:text-slate-500 mt-1">•</span>
-                <div className="flex-1">
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 block">
-                    {item.enhancedTitle || item.title}
-                  </span>
-                  {item.description && (
-                    <span className="text-slate-600 dark:text-slate-400 block mt-1">
-                      {item.description}
+          {items.map((item, idx) => {
+            // UX FIX: If in Summary mode and not enhanced, show SKELETON
+            if (!item.enhancedTitle) return <SkeletonItem key={idx} />;
+
+            return (
+                <li key={idx} className="flex flex-col gap-1.5 text-sm group">
+                <div className="flex items-start gap-3">
+                    <span className="text-slate-400 dark:text-slate-500 mt-1">•</span>
+                    <div className="flex-1">
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 block">
+                        {item.enhancedTitle}
                     </span>
-                  )}
-                  {item.businessImpact && (
-                    <span className="text-xs text-sky-600 dark:text-sky-400 italic block mt-1">
-                      {item.businessImpact}
-                    </span>
-                  )}
-                  {item.prNumber && (
-                    <a href={item.prUrl} target="_blank" className="ml-2 text-[10px] text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
-                      [#{item.prNumber}]
-                    </a>
-                  )}
+                    {item.description && (
+                        <span className="text-slate-600 dark:text-slate-400 block mt-1">
+                        {item.description}
+                        </span>
+                    )}
+                    {item.businessImpact && (
+                        <span className="text-xs text-sky-600 dark:text-sky-400 italic block mt-1">
+                        {item.businessImpact}
+                        </span>
+                    )}
+                    {item.prNumber && (
+                        <a href={item.prUrl} target="_blank" className="ml-2 text-[10px] text-slate-400 dark:text-slate-500 opacity-50 group-hover:opacity-100 hover:text-sky-600 dark:hover:text-sky-400 transition-all">
+                        [#{item.prNumber}]
+                        </a>
+                    )}
+                    </div>
                 </div>
-              </div>
-            </li>
-          ))}
+                </li>
+            );
+          })}
         </ul>
       </div>
     );
@@ -424,7 +427,7 @@ export default function Page() {
                     {enhancing && (
                       <div className="flex items-center gap-2 text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-2 py-1 rounded-full">
                         <Sparkles size={12} className="animate-spin" />
-                        <span>Enhancing new items ({enhancedCount}/{totalToEnhance})...</span>
+                        <span>Processing new updates...</span>
                       </div>
                     )}
                   </div>
@@ -538,7 +541,7 @@ export default function Page() {
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
                         
-                        {/* EXECUTIVE VIEW */}
+                        {/* EXECUTIVE VIEW (Now with Skeletons) */}
                         {viewMode === 'summary' && (
                             <div>
                             {renderSummarySection('Global Connectivity', week.items.filter(i => getCategory(i) === 'Global Connectivity'))}
@@ -554,7 +557,7 @@ export default function Page() {
                             </div>
                         )}
 
-                        {/* LIST VIEW */}
+                        {/* LIST VIEW (Always Raw Data) */}
                         {viewMode === 'list' && (
                             <ul className="space-y-5">
                             {week.items.map((item, idx) => (
@@ -566,6 +569,7 @@ export default function Page() {
                                         <div className="flex-1">
                                         <p className="font-medium text-slate-800 dark:text-slate-200">
                                             {item.connector && <span className="font-bold text-slate-900 dark:text-slate-100 mr-1">{item.connector}:</span>}
+                                            {/* In List Mode, we prefer Enhanced if available, but Raw is fine too */}
                                             {item.enhancedTitle || item.title}
                                         </p>
                                         {item.description && (
