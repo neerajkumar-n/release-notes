@@ -134,24 +134,15 @@ export default function Page() {
     if (allParsedWeeks.length === 0) return;
 
     // 1. Slice: Only take the number of weeks allowed by pagination
-    // e.g., First 2 weeks, then 4 weeks...
     const slicedWeeks = allParsedWeeks.slice(0, visibleWeeksCount);
 
     // 2. Flatten: Convert weeks back to items list for filtering/enhancement
     const currentItems: ReleaseItem[] = [];
     slicedWeeks.forEach(week => {
-      // Important: Ensure we preserve any enhancement data if it exists in state
-      // This is handled by the enhancement loop updating `displayedItems`
-      // But initially, we grab from raw weeks.
       currentItems.push(...week.items);
     });
 
     // 3. Update the items being "Watched" by the UI and AI
-    // We only update if length changed to avoid resetting enhanced data loop
-    // Note: The actual enhancement persistence is handled in the `enhanceInBackground` 
-    // merging logic, so here we can just set the base items.
-    
-    // However, to keep enhancements, we need to merge with existing `displayedItems`
     setDisplayedItems(prevItems => {
         const newItems = [...currentItems];
         // Merge existing enhancements into the new slice
@@ -211,7 +202,7 @@ export default function Page() {
     setTotalToEnhance(itemsToFetch.length);
     setEnhancedCount(0);
 
-    constQN = 5; // Batch size
+    const batchSize = 5; // FIXED: Correctly defined batch size
     let processed = 0;
 
     for (let i = 0; i < itemsToFetch.length; i += batchSize) {
