@@ -16,8 +16,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ summaryFragment: "" });
     }
 
-    // STRICT SAFETY: Limit input to prevent timeouts.
-    // The client handles batching, but if a huge payload hits, we slice it.
+    // SAFETY: Even if the frontend sends too many, we slice to 15 to prevent crash.
     const safeItems = items.slice(0, 15); 
 
     const list = safeItems.map((i: any) => `- ${i.title} (PR #${i.prNumber})`).join('\n');
@@ -25,12 +24,11 @@ export async function POST(req: Request) {
     const prompt = `
       Analyze these Hyperswitch PRs (Week: ${weekDate}).
       
-      OUTPUT INSTRUCTIONS:
-      - Return ONLY HTML <li> tags.
-      - NO introductory text ("Here is the list...").
-      - NO markdown formatting (\`\`\`).
-      - Format: <li class="text-sm mb-1.5 leading-relaxed"><strong class="text-slate-800 dark:text-slate-200">[Category]</strong>: Business value summary <span class="opacity-60 text-xs ml-1">#PR</span></li>
-      - Categories: **Highlights**, **Connectors**, **Core**.
+      OUTPUT RULES:
+      1. Return ONLY HTML <li> tags.
+      2. NO introductory text, NO markdown, NO code blocks.
+      3. Format: <li class="text-sm mb-1.5 leading-relaxed"><strong class="text-slate-800 dark:text-slate-200">[Category]</strong>: Summary <span class="opacity-60 text-xs ml-1">#PR</span></li>
+      4. Categories: **Highlights**, **Connectors**, **Core**, **Experience**.
       
       Input Data:
       ${list}
@@ -43,27 +41,21 @@ export async function POST(req: Request) {
         { role: 'user', content: prompt }
       ],
       temperature: 0.3,
-      max_tokens: 600,
+      max_tokens: 700,
     });
 
     const rawContent = completion.choices[0]?.message?.content || '';
     
-    // --- CLEANER: STRIP "THINKING" TEXT ---
-    // If the model generates "Sure! Here is the list...", we want to delete that.
-    // We look for the first occurrence of "<li" and keep everything after it.
+    // --- CLEANER: Remove "Thinking" text ---
+    // We look for the first <li> tag and ignore everything before it.
     let cleanHtml = rawContent;
     const listStartIndex = rawContent.indexOf('<li');
     if (listStartIndex !== -1) {
         cleanHtml = rawContent.substring(listStartIndex);
     }
     
-    // Remove closing code blocks or end text
+    // Remove any trailing code block markers
     cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
-    
-    // Final sanity check: If it doesn't look like HTML, return nothing to avoid UI ugliness
-    if (!cleanHtml.includes('<li')) {
-        return NextResponse.json({ summaryFragment: '' });
-    }
 
     return NextResponse.json({ summaryFragment: cleanHtml });
 
