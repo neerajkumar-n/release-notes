@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
+  ChevronDown, // <--- Added this back
   Moon,
   Sun,
   List,
@@ -192,14 +193,14 @@ export default function Page() {
        const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === week.id);
        const prodDate = addDays(cycleDateObj, 8);
        
-       // RESTORED: Filter Items for List View
+       // Filter Items for List View
        const filteredItems = week.items.filter(item => {
            // Connector Filter
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            // Type Filter
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
            
-           // Date Range Filter (Restored!)
+           // Date Range Filter
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
