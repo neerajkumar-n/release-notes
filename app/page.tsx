@@ -13,7 +13,8 @@ import {
   Rocket,
   ArrowDownCircle,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Save
 } from 'lucide-react';
 import {
   parseISO,
@@ -27,6 +28,10 @@ import {
   addDays,
   isFuture,
 } from 'date-fns';
+
+// 1. IMPORT STATIC CACHE
+// This loads all your committed summaries instantly
+import staticCache from './data/summary-cache.json';
 
 type ReleaseItem = {
   title: string;
@@ -72,7 +77,9 @@ export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
-  const [summaries, setSummaries] = useState<Record<string, string>>({}); 
+  
+  // Initialize state with the static JSON cache
+  const [summaries, setSummaries] = useState<Record<string, string>>(staticCache); 
   
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -103,19 +110,23 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- THE CHUNKING LOGIC ---
+  // --- HYBRID CACHE LOGIC ---
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
-    const CACHE_KEY = 'hyperswitch_summary_cache_v8'; // New version
+    const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
     
-    let cachedData: Record<string, string> = {};
+    // Load local storage (browser cache) on top of static cache
+    let currentCache = { ...summaries };
     try {
-      const stored = localStorage.getItem(CACHE_KEY);
-      if (stored) cachedData = JSON.parse(stored);
-      setSummaries(prev => ({ ...prev, ...cachedData }));
+      const stored = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (stored) {
+          const parsed = JSON.parse(stored);
+          currentCache = { ...currentCache, ...parsed };
+          setSummaries(currentCache);
+      }
     } catch (e) { console.error(e); }
 
     const missingWeeks = weeksToProcess.filter(w => 
-      !cachedData[w.id] && 
+      !currentCache[w.id] &&  // Check if we already have it (from JSON or LocalStorage)
       !generatingIds.has(w.id) && 
       (forceRetry || !failedIds.has(w.id))
     );
@@ -138,55 +149,48 @@ export default function Page() {
 
     for (const week of missingWeeks) {
       try {
-        // 1. SPLIT ITEMS INTO CHUNKS OF 10
-        // This is where we break it down. 20 items become 2 calls of 10.
+        // 1. CHUNK STRATEGY (Avoid Timeouts)
         const CHUNK_SIZE = 10;
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
             chunks.push(week.items.slice(i, i + CHUNK_SIZE));
         }
 
-        // 2. PARALLEL EXECUTION
-        // We fire all chunks at once. They run in parallel, saving time.
         const chunkPromises = chunks.map(chunkItems => 
             fetch('/api/generate-summary', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    items: chunkItems,
-                    weekDate: week.date
-                })
-            }).then(res => {
-                if (!res.ok) throw new Error(`API Error ${res.status}`);
-                return res.json();
-            })
+                body: JSON.stringify({ items: chunkItems, weekDate: week.date })
+            }).then(r => r.json())
         );
 
         const results = await Promise.all(chunkPromises);
+        const combinedFragments = results.map(r => r.summaryFragment || '').join('');
         
-        // 3. STITCH THE RESULTS
-        const combinedFragments = results.map(r => r.summaryFragment).join('');
-        
+        // Final HTML Layout
         const finalHtml = `
           <div class="space-y-4">
             <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
-              <h3 class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 border-b border-slate-200 dark:border-slate-700 pb-2">
-                Executive Summary
-              </h3>
               <ul class="space-y-3 pl-2 list-none">
                 ${combinedFragments}
               </ul>
             </div>
-            <p class="text-[10px] text-center text-slate-400 opacity-60 font-mono mt-2">
-                Processed ${week.items.length} updates in ${chunks.length} batches
-            </p>
           </div>
         `;
 
-        setSummaries(prev => {
-             const newVal = { ...prev, [week.id]: finalHtml };
-             localStorage.setItem(CACHE_KEY, JSON.stringify(newVal));
-             return newVal;
+        // 2. UPDATE STATE
+        const newCache = { ...summaries, [week.id]: finalHtml }; // Use functional update
+        setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
+        
+        // 3. PERSIST TO BROWSER
+        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(newCache));
+
+        // 4. PERSIST TO FILE SYSTEM (Local Dev Only)
+        // This is the magic part: it auto-saves to your repo file
+        await fetch('/api/save-summary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: week.id, summary: finalHtml })
         });
 
       } catch (e) {
@@ -204,7 +208,7 @@ export default function Page() {
         });
       }
     }
-  }, [generatingIds, failedIds]);
+  }, [generatingIds, failedIds, summaries]); // Added summaries dependency
 
   // --- GROUPING LOGIC ---
   useEffect(() => {
@@ -260,7 +264,7 @@ export default function Page() {
             items: filteredItems,
             isCurrentWeek: isCurrent,
             productionDate: format(prodDate, 'EEE, MMM d'),
-            aiSummary: summaries[key],
+            aiSummary: summaries[key], // Will pull from JSON if available
             isGenerating: generatingIds.has(key),
             hasFailed: failedIds.has(key)
         };
@@ -394,18 +398,15 @@ export default function Page() {
                                     <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
                                         <AlertCircle className="text-red-500 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
-                                        <div className="flex gap-4">
-                                            <button onClick={() => setViewMode('list')} className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">View Raw List</button>
-                                            <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
-                                        </div>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
+                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
                                     </div>
                                 ) : (
                                     <>
                                         {week.isGenerating && (
                                             <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
                                                 <Sparkles size={16} />
-                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates...</span>
                                             </div>
                                         )}
                                         <SummarySkeleton />
