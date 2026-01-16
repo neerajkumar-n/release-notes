@@ -80,13 +80,20 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  const isFiltered = connectorFilter !== 'All' || typeFilter !== 'All' || fromDate !== '' || toDate !== '';
+  // 1. SPLIT FILTER LOGIC
+  // Content Filters (Must force List View)
+  const isContentFiltered = connectorFilter !== 'All' || typeFilter !== 'All';
+  // Date Filters (Allowed in Executive View)
+  const isDateFiltered = fromDate !== '' || toDate !== '';
+  // Any Filter
+  const isAnyFiltered = isContentFiltered || isDateFiltered;
 
+  // 2. FORCE LIST VIEW ONLY FOR CONTENT FILTERS
   useEffect(() => {
-    if (isFiltered) {
+    if (isContentFiltered) {
         setViewMode('list');
     }
-  }, [isFiltered]);
+  }, [isContentFiltered]);
 
   useEffect(() => {
     async function fetchData() {
@@ -156,7 +163,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- REVISED GROUPING & FILTERING LOGIC ---
+  // --- REVISED GROUPING ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -181,11 +188,8 @@ export default function Page() {
         }
     });
 
-    // 1. Sort ALL keys first (Newest to Oldest)
     const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
     
-    // 2. Map ALL groups to objects (applying filters immediately)
-    // We map everything first so we know which weeks actually have content matching the filter
     const allGroupsMapped: ReleaseGroup[] = sortedKeys.map(key => {
         const items = groups[key];
         const cycleDateObj = parseISO(key);
@@ -198,7 +202,7 @@ export default function Page() {
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
-        // Filter Items inside the week
+        // Filter Items (only affects List View count, logic stays for Executive)
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -223,23 +227,22 @@ export default function Page() {
         };
     });
 
-    // 3. Final Display Logic
+    // 3. DISPLAY LOGIC
     let visibleGroups = [];
     
-    if (isFiltered) {
-        // FILTER MODE: Show EVERYTHING that matches the filter. 
-        // Hide weeks that became empty due to the filter.
+    if (isAnyFiltered) {
+        // If filtering by DATE, we show weeks that have items in that range
         visibleGroups = allGroupsMapped.filter(g => g.items.length > 0);
     } else {
-        // DEFAULT MODE: Show the top X weeks (Pagination)
+        // Default Pagination
         visibleGroups = allGroupsMapped.slice(0, visibleWeeksCount);
     }
 
     setGroupedWeeks(visibleGroups);
 
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isFiltered]);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isAnyFiltered]);
 
-  const hasMore = !isFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
+  const hasMore = !isAnyFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
 
   const connectors = useMemo(() => {
     const uniqueConnectors = new Set<string>();
@@ -266,13 +269,14 @@ export default function Page() {
 
               <div className="flex items-center gap-4">
                   <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
+                      {/* UPDATED BUTTON LOGIC: Only disabled for Content Filters */}
                       <button
-                          onClick={() => !isFiltered && setViewMode('summary')}
-                          disabled={isFiltered}
+                          onClick={() => !isContentFiltered && setViewMode('summary')}
+                          disabled={isContentFiltered}
                           className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all 
                             ${viewMode === 'summary' 
                                 ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' 
-                                : isFiltered 
+                                : isContentFiltered 
                                     ? 'text-slate-400 cursor-not-allowed opacity-50' 
                                     : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                             }`}
@@ -331,10 +335,10 @@ export default function Page() {
                 </div>
               </div>
             </div>
-            {isFiltered && (
+            {isContentFiltered && (
                  <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg border border-amber-200 dark:border-amber-900/30">
                     <Info size={14} />
-                    <span>Showing matching results from full history. Executive summary disabled.</span>
+                    <span>Executive Summaries disabled when filtering by Connector or Type.</span>
                  </div>
             )}
           </section>
@@ -378,7 +382,8 @@ export default function Page() {
                     </div>
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                        {viewMode === 'summary' && !isFiltered ? (
+                        {/* EXECUTIVE VIEW */}
+                        {viewMode === 'summary' && !isContentFiltered ? (
                             <>
                                 {week.aiSummary ? (
                                     <div 
@@ -411,13 +416,13 @@ export default function Page() {
                                 )}
                             </>
                         ) : (
+                            /* LIST VIEW */
                             <ul className="space-y-5">
                             {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items match your filters.</li> : 
                                 week.items.map((item, idx) => (
                                     <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
                                         <div className="flex items-start gap-3">
-                                            {/* UPDATED BADGE STYLING HERE */}
-                                            <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-[10px] font-bold ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                            <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
                                                 {item.type}
                                             </span>
                                             <div className="flex-1">
