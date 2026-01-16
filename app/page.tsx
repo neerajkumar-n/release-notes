@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  ChevronDown,
   Moon,
   Sun,
   List,
@@ -14,6 +13,8 @@ import {
   ArrowDownCircle,
   AlertCircle,
   RefreshCw,
+  Info,
+  ChevronDown
 } from 'lucide-react';
 import {
   parseISO,
@@ -28,7 +29,6 @@ import {
   isFuture,
 } from 'date-fns';
 
-// IMPORT STATIC CACHE
 import staticCache from './data/summary-cache.json';
 
 type ReleaseItem = {
@@ -73,10 +73,8 @@ const SummarySkeleton = () => (
 
 export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
-  // Changed default to 5 so you can see older weeks immediately
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(5); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
-  
   const [summaries, setSummaries] = useState<Record<string, string>>(staticCache); 
   
   const [loading, setLoading] = useState(false);
@@ -90,6 +88,16 @@ export default function Page() {
   const [typeFilter, setTypeFilter] = useState<'All' | 'Feature' | 'Bug Fix'>('All');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
+
+  // DETECT ACTIVE FILTERS
+  const isFiltered = connectorFilter !== 'All' || typeFilter !== 'All' || fromDate !== '' || toDate !== '';
+
+  // FORCE LIST VIEW ON FILTER
+  useEffect(() => {
+    if (isFiltered) {
+        setViewMode('list');
+    }
+  }, [isFiltered]);
 
   useEffect(() => {
     async function fetchData() {
@@ -107,10 +115,10 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- HYBRID CACHE LOGIC ---
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
+    if (isFiltered) return; // Don't generate summaries if filtering
+
     const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
-    
     let currentCache = { ...summaries };
     try {
       const stored = localStorage.getItem(LOCAL_CACHE_KEY);
@@ -176,8 +184,6 @@ export default function Page() {
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(newCache));
-
-        // Attempt save to local file system
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -199,9 +205,8 @@ export default function Page() {
         });
       }
     }
-  }, [generatingIds, failedIds, summaries]);
+  }, [generatingIds, failedIds, summaries, isFiltered]);
 
-  // --- GROUPING LOGIC (Fixed Dates: Wednesday to Tuesday) ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -231,18 +236,15 @@ export default function Page() {
 
     const mapped: ReleaseGroup[] = visibleKeys.map(key => {
         const items = groups[key];
-        const cycleDateObj = parseISO(key); // This is the Wednesday (Release Day)
+        const cycleDateObj = parseISO(key);
         
-        // LOGIC FIX: Date Range is (Wednesday - 7 days) to (Wednesday - 1 day)
-        // e.g. Jan 7 -> Start: Dec 31, End: Jan 6
         const startDate = new Date(cycleDateObj);
         startDate.setDate(cycleDateObj.getDate() - 7);
-        
         const endDate = new Date(cycleDateObj);
         endDate.setDate(cycleDateObj.getDate() - 1);
         
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
-        const prodDate = addDays(cycleDateObj, 8); // Prod release logic (unchanged)
+        const prodDate = addDays(cycleDateObj, 8);
 
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
@@ -299,20 +301,38 @@ export default function Page() {
 
               <div className="flex items-center gap-4">
                   <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
-                      <button onClick={() => setViewMode('summary')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'summary' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}>
+                      {/* EXECUTIVE BUTTON: DISABLED ON FILTER */}
+                      <button
+                          onClick={() => !isFiltered && setViewMode('summary')}
+                          disabled={isFiltered}
+                          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all 
+                            ${viewMode === 'summary' 
+                                ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' 
+                                : isFiltered 
+                                    ? 'text-slate-400 cursor-not-allowed opacity-50' 
+                                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                            }`}
+                      >
                           <FileText size={16} /> EXECUTIVE
                       </button>
-                      <button onClick={() => setViewMode('list')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}>
+
+                      <button
+                          onClick={() => setViewMode('list')}
+                          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'}`}
+                      >
                           <List size={16} /> LIST VIEW
                       </button>
                   </div>
+
                   <div className="h-8 w-px bg-gray-300 dark:bg-slate-800 mx-1"></div>
+
                   <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 rounded-full border border-gray-300 bg-white text-slate-500 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-white transition-all">
                     {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
                   </button>
               </div>
           </section>
 
+          {/* FILTERS */}
           <section className="mb-10 p-5 rounded-2xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900/50 shadow-sm">
             <div className="grid gap-5 md:grid-cols-[1fr_200px_auto]">
               <div>
@@ -347,6 +367,12 @@ export default function Page() {
                 </div>
               </div>
             </div>
+            {isFiltered && (
+                 <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg border border-amber-200 dark:border-amber-900/30">
+                    <Info size={14} />
+                    <span>Executive Summaries are available for full weekly updates only. Clear filters to view.</span>
+                 </div>
+            )}
           </section>
 
           <section className="min-h-[400px]">
@@ -384,7 +410,7 @@ export default function Page() {
                     </div>
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                        {viewMode === 'summary' && (
+                        {viewMode === 'summary' && !isFiltered ? (
                             <>
                                 {week.aiSummary ? (
                                     <div 
@@ -395,11 +421,8 @@ export default function Page() {
                                     <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
                                         <AlertCircle className="text-red-500 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
-                                        <div className="flex gap-4">
-                                            <button onClick={() => setViewMode('list')} className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">View Raw List</button>
-                                            <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
-                                        </div>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
+                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
                                     </div>
                                 ) : (
                                     <>
@@ -413,11 +436,9 @@ export default function Page() {
                                     </>
                                 )}
                             </>
-                        )}
-
-                        {viewMode === 'list' && (
+                        ) : (
                             <ul className="space-y-5">
-                            {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items.</li> : 
+                            {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items match your filters.</li> : 
                                 week.items.map((item, idx) => (
                                     <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
                                         <div className="flex items-start gap-3">
