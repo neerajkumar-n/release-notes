@@ -14,7 +14,8 @@ import {
   AlertCircle,
   RefreshCw,
   Info,
-  ChevronDown
+  ChevronDown,
+  Hammer
 } from 'lucide-react';
 import {
   parseISO,
@@ -61,20 +62,12 @@ type ReleaseGroup = {
   hasFailed?: boolean;
 };
 
-const SummarySkeleton = () => (
-  <div className="animate-pulse space-y-8">
-    <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-xl w-full"></div>
-    <div className="space-y-4">
-      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3"></div>
-      <div className="h-20 bg-slate-100 dark:bg-slate-800 rounded w-full"></div>
-    </div>
-  </div>
-);
-
 export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(5); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
+  
+  // Initialize with Static JSON
   const [summaries, setSummaries] = useState<Record<string, string>>(staticCache); 
   
   const [loading, setLoading] = useState(false);
@@ -89,7 +82,6 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // DETECT ACTIVE FILTERS
   const isFiltered = connectorFilter !== 'All' || typeFilter !== 'All' || fromDate !== '' || toDate !== '';
 
   // FORCE LIST VIEW ON FILTER
@@ -99,6 +91,7 @@ export default function Page() {
     }
   }, [isFiltered]);
 
+  // FETCH DATA
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
@@ -115,44 +108,14 @@ export default function Page() {
     fetchData();
   }, []);
 
-  const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
-    if (isFiltered) return; // Don't generate summaries if filtering
+  // --- MANUAL GENERATION ONLY ---
+  // We removed the useEffect that calls this automatically.
+  // This is now only triggered by clicking the "Generate" button.
+  const generateSummaryForWeek = useCallback(async (week: ReleaseGroup) => {
+    setGeneratingIds(prev => { const n = new Set(prev); n.add(week.id); return n; });
+    setFailedIds(prev => { const n = new Set(prev); n.delete(week.id); return n; });
 
-    const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
-    let currentCache = { ...summaries };
     try {
-      const stored = localStorage.getItem(LOCAL_CACHE_KEY);
-      if (stored) {
-          const parsed = JSON.parse(stored);
-          currentCache = { ...currentCache, ...parsed };
-          setSummaries(currentCache);
-      }
-    } catch (e) { console.error(e); }
-
-    const missingWeeks = weeksToProcess.filter(w => 
-      !currentCache[w.id] && 
-      !generatingIds.has(w.id) && 
-      (forceRetry || !failedIds.has(w.id))
-    );
-    
-    if (missingWeeks.length === 0) return;
-
-    setGeneratingIds(prev => {
-      const next = new Set(prev);
-      missingWeeks.forEach(w => next.add(w.id));
-      return next;
-    });
-
-    if (forceRetry) {
-      setFailedIds(prev => {
-        const next = new Set(prev);
-        missingWeeks.forEach(w => next.delete(w.id));
-        return next;
-      });
-    }
-
-    for (const week of missingWeeks) {
-      try {
         const CHUNK_SIZE = 10;
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
@@ -180,33 +143,29 @@ export default function Page() {
           </div>
         `;
 
-        const newCache = { ...summaries, [week.id]: finalHtml };
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
-        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(newCache));
+        // Save to LocalStorage
+        const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
+        const currentLocal = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || '{}');
+        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ ...currentLocal, [week.id]: finalHtml }));
+
+        // Attempt save to File System (Local Dev)
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: week.id, summary: finalHtml })
         });
 
-      } catch (e) {
+    } catch (e) {
         console.error(`Error summarizing week ${week.id}`, e);
-        setFailedIds(prev => {
-          const next = new Set(prev);
-          next.add(week.id);
-          return next;
-        });
-      } finally {
-        setGeneratingIds(prev => {
-          const next = new Set(prev);
-          next.delete(week.id);
-          return next;
-        });
-      }
+        setFailedIds(prev => { const n = new Set(prev); n.add(week.id); return n; });
+    } finally {
+        setGeneratingIds(prev => { const n = new Set(prev); n.delete(week.id); return n; });
     }
-  }, [generatingIds, failedIds, summaries, isFiltered]);
+  }, []);
 
+  // --- GROUPING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -270,9 +229,9 @@ export default function Page() {
     });
 
     setGroupedWeeks(mapped);
-    generateSummariesForVisible(mapped);
+    // REMOVED: generateSummariesForVisible(mapped);
 
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, generateSummariesForVisible]);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate]);
 
   const hasMore = visibleWeeksCount < (allParsedWeeks.length + 5);
 
@@ -301,7 +260,6 @@ export default function Page() {
 
               <div className="flex items-center gap-4">
                   <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
-                      {/* EXECUTIVE BUTTON: DISABLED ON FILTER */}
                       <button
                           onClick={() => !isFiltered && setViewMode('summary')}
                           disabled={isFiltered}
@@ -417,23 +375,30 @@ export default function Page() {
                                       className="prose prose-slate dark:prose-invert max-w-none"
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
-                                ) : week.hasFailed ? (
-                                    <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
-                                        <AlertCircle className="text-red-500 mb-3" size={32} />
-                                        <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
-                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
-                                    </div>
                                 ) : (
-                                    <>
-                                        {week.isGenerating && (
-                                            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
-                                                <Sparkles size={16} />
-                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
-                                            </div>
-                                        )}
-                                        <SummarySkeleton />
-                                    </>
+                                    <div className="flex flex-col items-center justify-center py-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900/20">
+                                        <Hammer className="text-slate-400 mb-3" size={32} />
+                                        <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">
+                                            Executive summary coming soon
+                                        </p>
+                                        <p className="text-xs text-slate-500 mb-6 max-w-sm">
+                                            We are working on this data set. Please circle back after a few weeks for the summary, or view the released PRs in the List view.
+                                        </p>
+                                        
+                                        {/* MANUAL GENERATE BUTTON (Use for Admin/Dev only) */}
+                                        <button 
+                                            onClick={() => generateSummaryForWeek(week)}
+                                            disabled={week.isGenerating}
+                                            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-sky-600 hover:border-sky-300 transition-all disabled:opacity-50"
+                                        >
+                                            {week.isGenerating ? (
+                                                <Loader2 size={12} className="animate-spin" />
+                                            ) : (
+                                                <Sparkles size={12} />
+                                            )}
+                                            {week.isGenerating ? 'Generating...' : 'Generate Summary'}
+                                        </button>
+                                    </div>
                                 )}
                             </>
                         ) : (
