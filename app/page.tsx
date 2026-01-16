@@ -14,7 +14,6 @@ import {
   ArrowDownCircle,
   AlertCircle,
   RefreshCw,
-  Save
 } from 'lucide-react';
 import {
   parseISO,
@@ -29,8 +28,7 @@ import {
   isFuture,
 } from 'date-fns';
 
-// 1. IMPORT STATIC CACHE
-// This loads all your committed summaries instantly
+// IMPORT STATIC CACHE
 import staticCache from './data/summary-cache.json';
 
 type ReleaseItem = {
@@ -75,10 +73,10 @@ const SummarySkeleton = () => (
 
 export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
-  const [visibleWeeksCount, setVisibleWeeksCount] = useState(2); 
+  // Changed default to 5 so you can see older weeks immediately
+  const [visibleWeeksCount, setVisibleWeeksCount] = useState(5); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
   
-  // Initialize state with the static JSON cache
   const [summaries, setSummaries] = useState<Record<string, string>>(staticCache); 
   
   const [loading, setLoading] = useState(false);
@@ -95,7 +93,6 @@ export default function Page() {
 
   useEffect(() => {
     async function fetchData() {
-      console.log('Fetching data...');
       setLoading(true);
       try {
         const res = await fetch('/api/release-notes');
@@ -114,7 +111,6 @@ export default function Page() {
   const generateSummariesForVisible = useCallback(async (weeksToProcess: ReleaseGroup[], forceRetry = false) => {
     const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
     
-    // Load local storage (browser cache) on top of static cache
     let currentCache = { ...summaries };
     try {
       const stored = localStorage.getItem(LOCAL_CACHE_KEY);
@@ -126,7 +122,7 @@ export default function Page() {
     } catch (e) { console.error(e); }
 
     const missingWeeks = weeksToProcess.filter(w => 
-      !currentCache[w.id] &&  // Check if we already have it (from JSON or LocalStorage)
+      !currentCache[w.id] && 
       !generatingIds.has(w.id) && 
       (forceRetry || !failedIds.has(w.id))
     );
@@ -149,7 +145,6 @@ export default function Page() {
 
     for (const week of missingWeeks) {
       try {
-        // 1. CHUNK STRATEGY (Avoid Timeouts)
         const CHUNK_SIZE = 10;
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
@@ -167,7 +162,6 @@ export default function Page() {
         const results = await Promise.all(chunkPromises);
         const combinedFragments = results.map(r => r.summaryFragment || '').join('');
         
-        // Final HTML Layout
         const finalHtml = `
           <div class="space-y-4">
             <div class="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -178,15 +172,12 @@ export default function Page() {
           </div>
         `;
 
-        // 2. UPDATE STATE
-        const newCache = { ...summaries, [week.id]: finalHtml }; // Use functional update
+        const newCache = { ...summaries, [week.id]: finalHtml };
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
-        // 3. PERSIST TO BROWSER
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(newCache));
 
-        // 4. PERSIST TO FILE SYSTEM (Local Dev Only)
-        // This is the magic part: it auto-saves to your repo file
+        // Attempt save to local file system
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -208,9 +199,9 @@ export default function Page() {
         });
       }
     }
-  }, [generatingIds, failedIds, summaries]); // Added summaries dependency
+  }, [generatingIds, failedIds, summaries]);
 
-  // --- GROUPING LOGIC ---
+  // --- GROUPING LOGIC (Fixed Dates: Wednesday to Tuesday) ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -240,12 +231,18 @@ export default function Page() {
 
     const mapped: ReleaseGroup[] = visibleKeys.map(key => {
         const items = groups[key];
-        const cycleDateObj = parseISO(key);
-        const prevThurs = new Date(cycleDateObj);
-        prevThurs.setDate(cycleDateObj.getDate() - 6);
+        const cycleDateObj = parseISO(key); // This is the Wednesday (Release Day)
+        
+        // LOGIC FIX: Date Range is (Wednesday - 7 days) to (Wednesday - 1 day)
+        // e.g. Jan 7 -> Start: Dec 31, End: Jan 6
+        const startDate = new Date(cycleDateObj);
+        startDate.setDate(cycleDateObj.getDate() - 7);
+        
+        const endDate = new Date(cycleDateObj);
+        endDate.setDate(cycleDateObj.getDate() - 1);
         
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
-        const prodDate = addDays(cycleDateObj, 8);
+        const prodDate = addDays(cycleDateObj, 8); // Prod release logic (unchanged)
 
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
@@ -259,12 +256,12 @@ export default function Page() {
         return {
             id: key,
             date: key,
-            headline: `${format(prevThurs, 'MMM d')} – ${format(cycleDateObj, 'MMM d')}`,
+            headline: `${format(startDate, 'MMM d')} – ${format(endDate, 'MMM d')}`,
             releaseVersion: versions[key] || null,
             items: filteredItems,
             isCurrentWeek: isCurrent,
             productionDate: format(prodDate, 'EEE, MMM d'),
-            aiSummary: summaries[key], // Will pull from JSON if available
+            aiSummary: summaries[key],
             isGenerating: generatingIds.has(key),
             hasFailed: failedIds.has(key)
         };
@@ -398,15 +395,18 @@ export default function Page() {
                                     <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-red-200 dark:border-red-900/30 rounded-xl bg-red-50 dark:bg-red-900/10">
                                         <AlertCircle className="text-red-500 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">Summary generation failed</p>
-                                        <p className="text-sm text-slate-500 mb-4 max-w-md">Timeout or API Error. Retrying in small chunks.</p>
-                                        <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
+                                        <p className="text-sm text-slate-500 mb-4 max-w-md">The AI service could not be reached. Please check your API keys or try again later.</p>
+                                        <div className="flex gap-4">
+                                            <button onClick={() => setViewMode('list')} className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">View Raw List</button>
+                                            <button onClick={() => generateSummariesForVisible([week], true)} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-bold hover:bg-sky-700 transition-colors"><RefreshCw size={14} /> Retry AI</button>
+                                        </div>
                                     </div>
                                 ) : (
                                     <>
                                         {week.isGenerating && (
                                             <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 mb-6 animate-pulse">
                                                 <Sparkles size={16} />
-                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates...</span>
+                                                <span className="text-sm font-semibold">Analyzing {week.items.length} updates for summary...</span>
                                             </div>
                                         )}
                                         <SummarySkeleton />
