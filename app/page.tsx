@@ -66,8 +66,6 @@ export default function Page() {
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(5); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
-  
-  // Initialize with Static JSON
   const [summaries, setSummaries] = useState<Record<string, string>>(staticCache); 
   
   const [loading, setLoading] = useState(false);
@@ -84,14 +82,12 @@ export default function Page() {
 
   const isFiltered = connectorFilter !== 'All' || typeFilter !== 'All' || fromDate !== '' || toDate !== '';
 
-  // FORCE LIST VIEW ON FILTER
   useEffect(() => {
     if (isFiltered) {
         setViewMode('list');
     }
   }, [isFiltered]);
 
-  // FETCH DATA
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
@@ -108,9 +104,6 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- MANUAL GENERATION ONLY ---
-  // We removed the useEffect that calls this automatically.
-  // This is now only triggered by clicking the "Generate" button.
   const generateSummaryForWeek = useCallback(async (week: ReleaseGroup) => {
     setGeneratingIds(prev => { const n = new Set(prev); n.add(week.id); return n; });
     setFailedIds(prev => { const n = new Set(prev); n.delete(week.id); return n; });
@@ -145,12 +138,10 @@ export default function Page() {
 
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
-        // Save to LocalStorage
         const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
         const currentLocal = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || '{}');
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ ...currentLocal, [week.id]: finalHtml }));
 
-        // Attempt save to File System (Local Dev)
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -165,7 +156,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- GROUPING LOGIC ---
+  // --- REVISED GROUPING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -190,10 +181,11 @@ export default function Page() {
         }
     });
 
+    // 1. Sort ALL keys first
     const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-    const visibleKeys = sortedKeys.slice(0, visibleWeeksCount);
-
-    const mapped: ReleaseGroup[] = visibleKeys.map(key => {
+    
+    // 2. Map ALL groups to objects (applying filters immediately)
+    const allGroupsMapped: ReleaseGroup[] = sortedKeys.map(key => {
         const items = groups[key];
         const cycleDateObj = parseISO(key);
         
@@ -205,9 +197,11 @@ export default function Page() {
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
+        // Filter Items
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
+           
            const itemDate = parseISO(item.originalDate);
            if (fromDate && isBefore(itemDate, startOfDay(parseISO(fromDate)))) return false;
            if (toDate && isAfter(itemDate, endOfDay(parseISO(toDate)))) return false;
@@ -228,12 +222,25 @@ export default function Page() {
         };
     });
 
-    setGroupedWeeks(mapped);
-    // REMOVED: generateSummariesForVisible(mapped);
+    // 3. Filter Groups based on content
+    // If filtering is active, we only want weeks that actually have items.
+    // If no filter, we keep everything (so pagination works normally).
+    let visibleGroups = allGroupsMapped;
+    
+    if (isFiltered) {
+        // If filtered, show EVERYTHING that matches, ignore pagination count
+        visibleGroups = allGroupsMapped.filter(g => g.items.length > 0);
+    } else {
+        // If not filtered, strictly obey pagination
+        visibleGroups = allGroupsMapped.slice(0, visibleWeeksCount);
+    }
 
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate]);
+    setGroupedWeeks(visibleGroups);
 
-  const hasMore = visibleWeeksCount < (allParsedWeeks.length + 5);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isFiltered]);
+
+  // Adjust "Load More" logic: hide it if we are filtering (since we show all matches)
+  const hasMore = !isFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
 
   const connectors = useMemo(() => {
     const uniqueConnectors = new Set<string>();
@@ -328,7 +335,7 @@ export default function Page() {
             {isFiltered && (
                  <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg border border-amber-200 dark:border-amber-900/30">
                     <Info size={14} />
-                    <span>Executive Summaries are available for full weekly updates only. Clear filters to view.</span>
+                    <span>Showing matching results from full history. Executive summary disabled.</span>
                  </div>
             )}
           </section>
@@ -339,6 +346,10 @@ export default function Page() {
                     <Loader2 className="animate-spin mb-3" size={32} />
                     <p>Fetching release history...</p>
                  </div>
+            ) : groupedWeeks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 opacity-50 text-slate-500">
+                    <p>No updates match your filters.</p>
+                </div>
             ) : groupedWeeks.map((week) => (
                 <div key={week.id} className="mb-16 relative pl-8 md:pl-0">
                     <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-sky-500/50 via-gray-300 to-transparent md:hidden dark:via-slate-800"></div>
@@ -385,7 +396,6 @@ export default function Page() {
                                             We are working on this data set. Please circle back after a few weeks for the summary, or view the released PRs in the List view.
                                         </p>
                                         
-                                        {/* MANUAL GENERATE BUTTON (Use for Admin/Dev only) */}
                                         <button 
                                             onClick={() => generateSummaryForWeek(week)}
                                             disabled={week.isGenerating}
