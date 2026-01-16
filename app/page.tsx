@@ -156,7 +156,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- REVISED GROUPING LOGIC ---
+  // --- REVISED GROUPING & FILTERING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -181,10 +181,11 @@ export default function Page() {
         }
     });
 
-    // 1. Sort ALL keys first
+    // 1. Sort ALL keys first (Newest to Oldest)
     const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
     
     // 2. Map ALL groups to objects (applying filters immediately)
+    // We map everything first so we know which weeks actually have content matching the filter
     const allGroupsMapped: ReleaseGroup[] = sortedKeys.map(key => {
         const items = groups[key];
         const cycleDateObj = parseISO(key);
@@ -197,7 +198,7 @@ export default function Page() {
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
-        // Filter Items
+        // Filter Items inside the week
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -222,16 +223,15 @@ export default function Page() {
         };
     });
 
-    // 3. Filter Groups based on content
-    // If filtering is active, we only want weeks that actually have items.
-    // If no filter, we keep everything (so pagination works normally).
-    let visibleGroups = allGroupsMapped;
+    // 3. Final Display Logic
+    let visibleGroups = [];
     
     if (isFiltered) {
-        // If filtered, show EVERYTHING that matches, ignore pagination count
+        // FILTER MODE: Show EVERYTHING that matches the filter. 
+        // Hide weeks that became empty due to the filter.
         visibleGroups = allGroupsMapped.filter(g => g.items.length > 0);
     } else {
-        // If not filtered, strictly obey pagination
+        // DEFAULT MODE: Show the top X weeks (Pagination)
         visibleGroups = allGroupsMapped.slice(0, visibleWeeksCount);
     }
 
@@ -239,7 +239,6 @@ export default function Page() {
 
   }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isFiltered]);
 
-  // Adjust "Load More" logic: hide it if we are filtering (since we show all matches)
   const hasMore = !isFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
 
   const connectors = useMemo(() => {
@@ -417,8 +416,9 @@ export default function Page() {
                                 week.items.map((item, idx) => (
                                     <li key={idx} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0">
                                         <div className="flex items-start gap-3">
-                                            <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                                {item.type === 'Feature' ? 'FEAT' : 'FIX'}
+                                            {/* UPDATED BADGE STYLING HERE */}
+                                            <span className={`mt-0.5 inline-flex h-fit w-fit items-center rounded-md px-2.5 py-1 text-[10px] font-bold ${item.type === 'Feature' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                                                {item.type}
                                             </span>
                                             <div className="flex-1">
                                             <p className="font-medium text-slate-800 dark:text-slate-200">
