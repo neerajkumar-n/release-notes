@@ -13,13 +13,14 @@
     "date-fns": "latest",
     "lucide-react": "latest",
     "next": "latest",
+    "octokit": "^3.1.2",
     "openai": "^6.16.0",
     "react": "latest",
     "react-dom": "latest",
     "tailwind-merge": "latest"
   },
   "devDependencies": {
-    "@google/generative-ai": "latest",
+    "@google/generative-ai": "^0.2.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
@@ -28,16 +29,4 @@
     "tailwindcss": "^3.4.0",
     "typescript": "latest"
   }
-  "typescript": "latest",
-  "@types/node": "latest",
-  "@types/react": "latest",
-  "@google/generative-ai": "latest",
-  "octokit": "^3.1.2",
-  "@google/generative-ai": "^0.2.1",
-  "openai": "latest",
-  "@types/react-dom": "latest",
-  "tailwindcss": "^3.4.0",
-  "postcss": "^8.4.0",
-  "autoprefixer": "^10.4.0"
-}
 }
