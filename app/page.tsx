@@ -15,7 +15,8 @@ import {
   RefreshCw,
   Info,
   ChevronDown,
-  Hammer
+  Hammer,
+  Hourglass
 } from 'lucide-react';
 import {
   parseISO,
@@ -80,20 +81,13 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // 1. SPLIT FILTER LOGIC
-  // Content Filters (Must force List View)
-  const isContentFiltered = connectorFilter !== 'All' || typeFilter !== 'All';
-  // Date Filters (Allowed in Executive View)
-  const isDateFiltered = fromDate !== '' || toDate !== '';
-  // Any Filter
-  const isAnyFiltered = isContentFiltered || isDateFiltered;
+  const isFiltered = connectorFilter !== 'All' || typeFilter !== 'All' || fromDate !== '' || toDate !== '';
 
-  // 2. FORCE LIST VIEW ONLY FOR CONTENT FILTERS
   useEffect(() => {
-    if (isContentFiltered) {
+    if (isFiltered) {
         setViewMode('list');
     }
-  }, [isContentFiltered]);
+  }, [isFiltered]);
 
   useEffect(() => {
     async function fetchData() {
@@ -163,7 +157,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- REVISED GROUPING ---
+  // --- GROUPING LOGIC ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -199,10 +193,10 @@ export default function Page() {
         const endDate = new Date(cycleDateObj);
         endDate.setDate(cycleDateObj.getDate() - 1);
         
+        // Strict Current Week Logic: If Cycle Date is in Future or Today
         const isCurrent = isFuture(cycleDateObj) || (format(new Date(), 'yyyy-MM-dd') === key);
         const prodDate = addDays(cycleDateObj, 8);
 
-        // Filter Items (only affects List View count, logic stays for Executive)
         const filteredItems = items.filter(item => {
            if (connectorFilter !== 'All' && item.connector !== connectorFilter) return false;
            if (typeFilter !== 'All' && item.type !== typeFilter) return false;
@@ -227,22 +221,18 @@ export default function Page() {
         };
     });
 
-    // 3. DISPLAY LOGIC
     let visibleGroups = [];
-    
-    if (isAnyFiltered) {
-        // If filtering by DATE, we show weeks that have items in that range
+    if (isFiltered) {
         visibleGroups = allGroupsMapped.filter(g => g.items.length > 0);
     } else {
-        // Default Pagination
         visibleGroups = allGroupsMapped.slice(0, visibleWeeksCount);
     }
 
     setGroupedWeeks(visibleGroups);
 
-  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isAnyFiltered]);
+  }, [allParsedWeeks, visibleWeeksCount, summaries, generatingIds, failedIds, connectorFilter, typeFilter, fromDate, toDate, isFiltered]);
 
-  const hasMore = !isAnyFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
+  const hasMore = !isFiltered && visibleWeeksCount < (allParsedWeeks.length + 5);
 
   const connectors = useMemo(() => {
     const uniqueConnectors = new Set<string>();
@@ -269,14 +259,13 @@ export default function Page() {
 
               <div className="flex items-center gap-4">
                   <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg border border-gray-300 dark:border-slate-700">
-                      {/* UPDATED BUTTON LOGIC: Only disabled for Content Filters */}
                       <button
-                          onClick={() => !isContentFiltered && setViewMode('summary')}
-                          disabled={isContentFiltered}
+                          onClick={() => !isFiltered && setViewMode('summary')}
+                          disabled={isFiltered}
                           className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all 
                             ${viewMode === 'summary' 
                                 ? 'bg-white text-sky-700 shadow-sm dark:bg-sky-600 dark:text-white' 
-                                : isContentFiltered 
+                                : isFiltered 
                                     ? 'text-slate-400 cursor-not-allowed opacity-50' 
                                     : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                             }`}
@@ -335,10 +324,10 @@ export default function Page() {
                 </div>
               </div>
             </div>
-            {isContentFiltered && (
+            {isFiltered && (
                  <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg border border-amber-200 dark:border-amber-900/30">
                     <Info size={14} />
-                    <span>Executive Summaries disabled when filtering by Connector or Type.</span>
+                    <span>Executive Summaries are available for full weekly updates only. Clear filters to view.</span>
                  </div>
             )}
           </section>
@@ -382,15 +371,26 @@ export default function Page() {
                     </div>
 
                     <div className="rounded-2xl border border-gray-200 bg-white p-8 md:p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-                        {/* EXECUTIVE VIEW */}
-                        {viewMode === 'summary' && !isContentFiltered ? (
+                        {viewMode === 'summary' && !isFiltered ? (
                             <>
                                 {week.aiSummary ? (
                                     <div 
                                       className="prose prose-slate dark:prose-invert max-w-none"
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
+                                ) : week.isCurrentWeek ? (
+                                    // NEW: "IN PROGRESS" STATE FOR CURRENT WEEK
+                                    <div className="flex flex-col items-center justify-center py-12 text-center border-2 border-dashed border-sky-100 dark:border-sky-900/30 rounded-xl bg-sky-50/50 dark:bg-sky-900/10">
+                                        <Hourglass className="text-sky-400 mb-3 animate-pulse" size={32} />
+                                        <p className="text-sky-800 dark:text-sky-200 font-bold mb-1">
+                                            Release in Progress
+                                        </p>
+                                        <p className="text-xs text-sky-600 dark:text-sky-400 max-w-sm px-4">
+                                            Updates for <strong>{week.headline}</strong> are actively being tracked. The executive summary will be available after the cycle completes.
+                                        </p>
+                                    </div>
                                 ) : (
+                                    // OLD: "COMING SOON" FOR PAST WEEKS (with Generate Button)
                                     <div className="flex flex-col items-center justify-center py-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900/20">
                                         <Hammer className="text-slate-400 mb-3" size={32} />
                                         <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">
@@ -416,7 +416,6 @@ export default function Page() {
                                 )}
                             </>
                         ) : (
-                            /* LIST VIEW */
                             <ul className="space-y-5">
                             {week.items.length === 0 ? <li className="text-slate-500 text-sm">No items match your filters.</li> : 
                                 week.items.map((item, idx) => (
