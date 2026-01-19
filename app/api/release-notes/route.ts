@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { enhanceReleaseItems } from '@/lib/llm-enhancer';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 type ReleaseItem = {
   title: string;
@@ -8,8 +9,11 @@ type ReleaseItem = {
   connector: string | null;
   prNumber?: string;
   prUrl?: string;
-  originalDate: string; 
-  version: string | null; // <--- NEW FIELD
+  originalDate: string;
+  enhancedTitle?: string;
+  description?: string;
+  businessImpact?: string;
+  version: string | null;
 };
 
 type ReleaseWeek = {
@@ -46,16 +50,19 @@ function normalizeConnector(raw: string): string {
 
 export async function GET() {
   try {
+    // FIXED LINE BELOW
     const res = await fetch(
-      'https://raw.githubusercontent.com/juspay/hyperswitch/main/CHANGELOG.md'
+      'https://raw.githubusercontent.com/juspay/hyperswitch/main/CHANGELOG.md',
+      { next: { revalidate: 3600 } }
     );
+    
     if (!res.ok) throw new Error('Failed to fetch changelog');
     const text = await res.text();
 
     const lines = text.split('\n');
     const weeks: ReleaseWeek[] = [];
     let currentWeek: ReleaseWeek | null = null;
-    let currentVersion: string | null = null; // <--- Track Version
+    let currentVersion: string | null = null;
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -66,7 +73,7 @@ export async function GET() {
       );
       
       if (versionMatch) {
-        currentVersion = versionMatch[1]; // Capture "2026.01.05.0"
+        currentVersion = versionMatch[1];
         
         // Parse date from version string
         const [y, m, d] = currentVersion.split('.').map(Number);
@@ -88,9 +95,11 @@ export async function GET() {
         if (!content) continue;
 
         const lower = content.toLowerCase();
-        const type: 'Feature' | 'Bug Fix' = 
+
+        // Smart Type Detection
+        const type: 'Feature' | 'Bug Fix' =
           lower.includes('fix') || lower.includes('bug') || lower.includes('resolves')
-          ? 'Bug Fix' 
+          ? 'Bug Fix'
           : 'Feature';
 
         const connectorMatch = content.match(/\[([a-zA-Z0-9_\s]+)\]/);
@@ -111,7 +120,7 @@ export async function GET() {
           prNumber,
           prUrl,
           originalDate: currentWeek.date,
-          version: currentVersion, // <--- Attach Version to Item
+          version: currentVersion,
         });
       }
     }
