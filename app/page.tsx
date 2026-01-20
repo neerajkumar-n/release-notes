@@ -5,7 +5,7 @@ import {
   Moon,
   Sun,
   List,
-  LayoutGrid, // Replaced FileText for "Executive" icon
+  LayoutGrid,
   Loader2,
   Sparkles,
   Clock,
@@ -35,7 +35,7 @@ import {
 
 import staticCache from './data/summary-cache.json';
 
-// --- TYPES (Preserved) ---
+// --- TYPES ---
 type ReleaseItem = {
   title: string;
   type: 'Feature' | 'Bug Fix';
@@ -67,7 +67,7 @@ type ReleaseGroup = {
 };
 
 export default function Page() {
-  // --- STATE (Preserved) ---
+  // --- STATE ---
   const [allParsedWeeks, setAllParsedWeeks] = useState<ReleaseWeek[]>([]);
   const [visibleWeeksCount, setVisibleWeeksCount] = useState(5); 
   const [groupedWeeks, setGroupedWeeks] = useState<ReleaseGroup[]>([]);
@@ -86,7 +86,7 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  // --- LOGIC: FILTERING (Preserved) ---
+  // --- LOGIC: FILTERING ---
   const isContentFiltered = connectorFilter !== 'All' || typeFilter !== 'All';
   const isAnyFiltered = isContentFiltered || fromDate !== '' || toDate !== '';
 
@@ -97,7 +97,7 @@ export default function Page() {
     }
   }, [isContentFiltered]);
 
-  // --- LOGIC: FETCH DATA (Preserved) ---
+  // --- LOGIC: FETCH DATA ---
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
@@ -114,14 +114,14 @@ export default function Page() {
     fetchData();
   }, []);
 
-  // --- LOGIC: AI GENERATION (Preserved Logic, Updated API Call) ---
+  // --- LOGIC: AI GENERATION ---
   const generateSummaryForWeek = useCallback(async (week: ReleaseGroup) => {
     setGeneratingIds(prev => { const n = new Set(prev); n.add(week.id); return n; });
     setFailedIds(prev => { const n = new Set(prev); n.delete(week.id); return n; });
 
     try {
-        // Chunk items (Logic preserved)
-        const CHUNK_SIZE = 15; // Adjusted slightly for context limits
+        // Chunk items
+        const CHUNK_SIZE = 30; // Increased since we are doing grouped lists now
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
             chunks.push(week.items.slice(i, i + CHUNK_SIZE));
@@ -138,18 +138,17 @@ export default function Page() {
         const results = await Promise.all(chunkPromises);
         const combinedFragments = results.map(r => r.summaryFragment || '').join('');
         
-        // Note: The new API returns a full DIV structure, so we just set it directly.
-        // We no longer wrap it in a <ul> like the old code because the AI returns the layout.
+        // The API now returns the FULL HTML structure for the card, so we just use it directly.
         const finalHtml = combinedFragments; 
 
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
-        // Local Storage Cache (Preserved)
+        // Update Local Storage
         const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
         const currentLocal = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || '{}');
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ ...currentLocal, [week.id]: finalHtml }));
 
-        // Server Save (Preserved)
+        // Update Server (Optional)
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -164,7 +163,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- LOGIC: GROUPING (Wednesday Cycles) (Preserved Exact Logic) ---
+  // --- LOGIC: GROUPING (Wednesday Cycles) ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -248,25 +247,22 @@ export default function Page() {
     return Array.from(uniqueConnectors).sort();
   }, [allParsedWeeks]);
 
-  // === NEW UI RENDERING ===
+  // === RENDER ===
   return (
     <div className={isDarkMode ? 'dark' : ''}>
-      <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-[#0B1120] dark:text-slate-50 font-sans selection:bg-indigo-500/30 transition-colors duration-300">
+      <div className="min-h-screen bg-[#FDFDFD] text-slate-900 dark:bg-[#0B1120] dark:text-slate-50 font-sans selection:bg-indigo-500/30 transition-colors duration-300">
         
-        {/* 1. HERO HEADER (New UI) */}
-        <header className="sticky top-0 z-50 backdrop-blur-xl bg-white/80 dark:bg-[#0B1120]/80 border-b border-slate-200 dark:border-slate-800/60">
-            <div className="mx-auto max-w-5xl px-4 py-4 md:py-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* HEADER */}
+        <header className="sticky top-0 z-50 backdrop-blur-xl bg-white/80 dark:bg-[#0B1120]/90 border-b border-slate-200/60 dark:border-slate-800/60 support-backdrop-blur:bg-white/60">
+            <div className="mx-auto max-w-5xl px-6 py-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
                         <Rocket size={20} fill="currentColor" className="text-white/90" />
                     </div>
                     <div>
                         <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
                             Hyperswitch <span className="text-slate-400 font-medium">Releases</span>
                         </h1>
-                        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            Updates tracked from GitHub Changelog
-                        </p>
                     </div>
                 </div>
 
@@ -304,10 +300,10 @@ export default function Page() {
             </div>
         </header>
 
-        <main className="mx-auto max-w-5xl px-4 pb-20 pt-8">
+        <main className="mx-auto max-w-5xl px-6 pb-24 pt-10">
           
-          {/* 2. FILTERS (New UI) */}
-          <section className="mb-12 p-1 rounded-2xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-900/50 shadow-sm border border-slate-200 dark:border-slate-800">
+          {/* FILTERS */}
+          <section className="mb-16 p-1 rounded-2xl bg-white dark:bg-slate-900 shadow-sm border border-slate-200 dark:border-slate-800">
              <div className="p-5 grid gap-5 md:grid-cols-[1fr_200px_auto]">
                 <div>
                   <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Connector</label>
@@ -315,7 +311,7 @@ export default function Page() {
                     <select 
                         value={connectorFilter} 
                         onChange={(e) => setConnectorFilter(e.target.value)} 
-                        className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                        className="w-full appearance-none rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
                     >
                         <option value="All">All Connectors</option>
                         {connectors.map((c) => (<option key={c} value={c}>{c}</option>))}
@@ -327,7 +323,7 @@ export default function Page() {
                 <div>
                     <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</label>
                     <div className="relative group">
-                      <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as any)} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                      <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as any)} className="w-full appearance-none rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                         <option value="All">All Types</option>
                         <option value="Feature">Features</option>
                         <option value="Bug Fix">Bug Fixes</option>
@@ -339,11 +335,11 @@ export default function Page() {
                 <div className="flex gap-2">
                     <div>
                         <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">From</label>
-                        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:[color-scheme:dark]" />
+                        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-36 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:[color-scheme:dark]" />
                     </div>
                     <div>
                         <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">To</label>
-                        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:[color-scheme:dark]" />
+                        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-36 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:[color-scheme:dark]" />
                     </div>
                 </div>
              </div>
@@ -355,9 +351,10 @@ export default function Page() {
             )}
           </section>
 
-          {/* 3. TIMELINE (New UI) */}
-          <section className="min-h-[400px] relative">
-            <div className="absolute left-[19px] top-4 bottom-0 w-[2px] bg-slate-200 dark:bg-slate-800 hidden md:block"></div>
+          {/* MAIN TIMELINE */}
+          <section className="relative">
+            {/* Timeline Line */}
+            <div className="absolute left-[19px] top-2 bottom-0 w-px bg-slate-200 dark:bg-slate-800 hidden md:block"></div>
 
             {loading ? (
                  <div className="flex flex-col items-center justify-center py-20 opacity-50">
@@ -369,36 +366,38 @@ export default function Page() {
                     <p>No updates match your filters.</p>
                 </div>
             ) : groupedWeeks.map((week, index) => (
-                <div key={week.id} className="group relative mb-12 pl-0 md:pl-16">
+                <div key={week.id} className="group relative mb-16 pl-0 md:pl-16">
                     
                     {/* Stepper Dot */}
-                    <div className="hidden md:flex absolute left-0 top-1.5 h-10 w-10 items-center justify-center rounded-full border-4 border-slate-50 bg-white dark:border-[#0B1120] dark:bg-slate-900 z-10 shadow-sm">
+                    <div className="hidden md:flex absolute left-0 top-1 h-10 w-10 items-center justify-center rounded-full border-[3px] border-slate-50 bg-white dark:border-[#0B1120] dark:bg-slate-900 z-10 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10">
                          {week.isCurrentWeek ? (
-                            <div className="h-3 w-3 rounded-full bg-amber-500 animate-pulse"></div>
+                            <div className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse"></div>
                          ) : index === 0 ? (
-                            <div className="h-3 w-3 rounded-full bg-indigo-500"></div>
+                            <div className="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]"></div>
                          ) : (
-                            <div className="h-2.5 w-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></div>
+                            <div className="h-2 w-2 rounded-full bg-slate-200 dark:bg-slate-700"></div>
                          )}
                     </div>
 
                     {/* Headline */}
-                    <div className="flex flex-col md:flex-row md:items-baseline justify-between mb-4 gap-2">
+                    <div className="flex flex-col md:flex-row md:items-baseline justify-between mb-6 gap-2">
                         <div>
-                             <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-3">
-                                {week.headline}
+                             <div className="flex items-center gap-3">
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
+                                    {week.headline}
+                                </h2>
                                 {week.isCurrentWeek && (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-[10px] font-bold uppercase text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
-                                        <Clock size={12} /> In Progress
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-[10px] font-bold uppercase text-amber-600 border border-amber-100 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800">
+                                        <Clock size={10} /> In Progress
                                     </span>
                                 )}
-                             </h2>
-                             <div className="flex items-center gap-3 mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                <span className="font-mono">{week.date}</span>
+                             </div>
+                             <div className="flex items-center gap-3 mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                                <span className="font-mono text-xs">{week.date}</span>
                                 {week.releaseVersion && (
                                     <>
-                                        <span className="h-1 w-1 rounded-full bg-slate-300"></span>
-                                        <span className="font-mono text-xs px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                        <span className="text-slate-300">•</span>
+                                        <span className="font-mono text-xs text-slate-600 dark:text-slate-300">
                                             v{week.releaseVersion}
                                         </span>
                                     </>
@@ -406,8 +405,8 @@ export default function Page() {
                              </div>
                         </div>
                         {week.productionDate && !week.isCurrentWeek && (
-                            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 px-3 py-1 rounded-full border border-emerald-100 dark:border-emerald-800/30">
-                                <CheckCircle2 size={12} /> Live: {week.productionDate}
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50/80 dark:bg-emerald-900/10 px-3 py-1.5 rounded-full border border-emerald-100/80 dark:border-emerald-800/30">
+                                <CheckCircle2 size={12} /> Live {week.productionDate}
                             </span>
                         )}
                     </div>
@@ -416,15 +415,14 @@ export default function Page() {
                         {viewMode === 'summary' && !isContentFiltered ? (
                             <div className="relative">
                                 {week.aiSummary ? (
-                                    // RENDER SUMMARY (AI generated HTML)
-                                    // Removed 'prose' so the grid layout works perfectly
+                                    // AI Summary is now a full layout (Cards/Lists), so we render full width
                                     <div 
                                       className="w-full"
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
                                 ) : (
                                     // EMPTY STATE
-                                    <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-white/50 dark:bg-slate-900/20">
+                                    <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-slate-900/20">
                                         {week.isCurrentWeek ? (
                                             <>
                                                 <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-full mb-3">
@@ -458,8 +456,8 @@ export default function Page() {
                                 )}
                             </div>
                         ) : (
-                            // LIST VIEW (New Table-like UI)
-                            <div className="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+                            // LIST VIEW (Clean Table Style)
+                            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                                 {week.items.length === 0 ? (
                                     <div className="p-8 text-center text-slate-500 text-sm">No items match filters.</div>
                                 ) : (
@@ -478,7 +476,7 @@ export default function Page() {
                                                     )}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-0.5">
+                                                    <div className="flex items-center gap-2 mb-1">
                                                         {item.connector && (
                                                             <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                                                 {item.connector}
