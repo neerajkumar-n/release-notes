@@ -16,11 +16,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ summaryFragment: "" });
     }
 
-    // INCREASED LIMIT: Ensure we don't drop items before sending to AI
-    const safeItems = items.slice(0, 50); 
+    // INCREASED LIMIT: Expanded to 60 to ensure we capture all updates
+    const safeItems = items.slice(0, 60); 
     const list = safeItems.map((i: any) => `- [${i.connector || 'Core'}] ${i.title} (PR #${i.prNumber})`).join('\n');
 
-    // --- PROMPT: COMPREHENSIVE COVERAGE ---
     const prompt = `
       You are a Release Notes UI Generator.
       Analyze these Hyperswitch Pull Requests (Week: ${weekDate}).
@@ -29,9 +28,9 @@ export async function POST(req: Request) {
       ${list}
 
       INSTRUCTIONS:
-      1. **Highlights:** Identify key themes. Do NOT limit to 3. If there are 5 major themes, list all 5.
+      1. **Highlights:** Identify ALL key themes. Do NOT limit to 3. If there are 5 major themes, list all 5.
       2. **Categorization:** Group remaining items into "Connectors" and "Core & Platform".
-      3. **Coverage:** Be COMPREHENSIVE. Do not drop valid connector updates or core features.
+      3. **Coverage:** Be COMPREHENSIVE. Include every significant update provided in the input. Do not drop items.
       4. **Design:** Use the "Stripe-like" dark-mode compatible HTML structure provided below.
 
       OUTPUT FORMAT:
@@ -78,7 +77,7 @@ export async function POST(req: Request) {
 
         <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
              <div class="bg-slate-50/50 dark:bg-slate-800/50 px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                 <h4 class="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Core & Platform</h4>
             </div>
             <div class="divide-y divide-slate-100 dark:divide-slate-800">
