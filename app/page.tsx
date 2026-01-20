@@ -17,6 +17,8 @@ import {
   Hourglass,
   GitPullRequest,
   CheckCircle2,
+  Calendar,
+  XCircle
 } from 'lucide-react';
 import {
   parseISO,
@@ -118,8 +120,7 @@ export default function Page() {
     setFailedIds(prev => { const n = new Set(prev); n.delete(week.id); return n; });
 
     try {
-        // Chunk items
-        const CHUNK_SIZE = 35; 
+        const CHUNK_SIZE = 30; 
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
             chunks.push(week.items.slice(i, i + CHUNK_SIZE));
@@ -139,12 +140,10 @@ export default function Page() {
 
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
         
-        // Update Local Storage
         const LOCAL_CACHE_KEY = 'hyperswitch_summary_browser_cache';
         const currentLocal = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || '{}');
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ ...currentLocal, [week.id]: finalHtml }));
 
-        // Update Server (Optional)
         await fetch('/api/save-summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -159,7 +158,7 @@ export default function Page() {
     }
   }, []);
 
-  // --- LOGIC: GROUPING (Wednesday Cycles) ---
+  // --- LOGIC: GROUPING ---
   useEffect(() => {
     if (allParsedWeeks.length === 0) return;
 
@@ -256,9 +255,13 @@ export default function Page() {
                         <Rocket size={20} fill="currentColor" className="text-white/90" />
                     </div>
                     <div>
-                        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+                        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white leading-none">
                             Hyperswitch <span className="text-slate-400 font-medium">Releases</span>
                         </h1>
+                        {/* UPDATE 1: ADDED SUBTEXT BELOW TITLE */}
+                        <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1.5">
+                            Weekly updates tracked from GitHub Changelog.
+                        </p>
                     </div>
                 </div>
 
@@ -364,14 +367,14 @@ export default function Page() {
             ) : groupedWeeks.map((week, index) => (
                 <div key={week.id} className="group relative mb-16 pl-0 md:pl-16">
                     
-                    {/* Stepper Dot */}
+                    {/* UPDATE 2: STATUS DOT (GREEN FOR COMPLETED, AMBER FOR IN PROGRESS) */}
                     <div className="hidden md:flex absolute left-0 top-1 h-10 w-10 items-center justify-center rounded-full border-[3px] border-slate-50 bg-white dark:border-[#0B1120] dark:bg-slate-900 z-10 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10">
                          {week.isCurrentWeek ? (
+                            // IN PROGRESS (Amber Pulse)
                             <div className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse"></div>
-                         ) : index === 0 ? (
-                            <div className="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]"></div>
                          ) : (
-                            <div className="h-2 w-2 rounded-full bg-slate-200 dark:bg-slate-700"></div>
+                            // COMPLETED (Emerald Green with Shadow)
+                            <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
                          )}
                     </div>
 
@@ -417,7 +420,7 @@ export default function Page() {
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
                                 ) : (
-                                    // EMPTY STATE (Fixed Dark Mode)
+                                    // EMPTY STATE
                                     <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 dark:border-slate-700/60 rounded-2xl bg-slate-50/50 dark:bg-slate-800/40 backdrop-blur-sm">
                                         {week.isCurrentWeek ? (
                                             <>
