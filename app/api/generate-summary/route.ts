@@ -16,10 +16,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ summaryFragment: "" });
     }
 
+    // Context limit safety
     const safeItems = items.slice(0, 30); 
     const list = safeItems.map((i: any) => `- [${i.connector || 'Core'}] ${i.title} (PR #${i.prNumber})`).join('\n');
 
-    // --- STRIPE-LIKE AESTHETIC PROMPT ---
+    // --- NEW PROMPT: STRIPE-LIKE UNIFIED CARDS ---
     const prompt = `
       You are a Release Notes UI Generator.
       Analyze these Hyperswitch Pull Requests (Week: ${weekDate}).
@@ -30,7 +31,7 @@ export async function POST(req: Request) {
       INSTRUCTIONS:
       1. **Highlights:** Pick the top 3 most impactful changes.
       2. **Categorization:** Group remaining items into "Connectors" and "Core & Platform".
-      3. **Structure:** instead of creating many small cards, create **ONE** unified card per category with divided list items.
+      3. **Structure:** Create ONE unified card per category with divided list items. Do NOT create a grid.
       4. **Links:** Convert PR numbers into interactive "Pills" (Badge style).
 
       OUTPUT FORMAT:
@@ -109,6 +110,7 @@ export async function POST(req: Request) {
     const rawContent = completion.choices[0]?.message?.content || '{}';
     let cleanHtml = '';
     
+    // Defensive parsing for markdown blocks
     try {
         const parsed = JSON.parse(rawContent);
         if (parsed.html) cleanHtml = parsed.html;
