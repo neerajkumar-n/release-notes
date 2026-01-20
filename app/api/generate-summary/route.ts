@@ -16,10 +16,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ summaryFragment: "" });
     }
 
-    const safeItems = items.slice(0, 30); 
+    // INCREASED LIMIT: Ensure we don't drop items before sending to AI
+    const safeItems = items.slice(0, 50); 
     const list = safeItems.map((i: any) => `- [${i.connector || 'Core'}] ${i.title} (PR #${i.prNumber})`).join('\n');
 
-    // UPDATED PROMPT: STRICT DARK MODE CLASSES
+    // --- PROMPT: COMPREHENSIVE COVERAGE ---
     const prompt = `
       You are a Release Notes UI Generator.
       Analyze these Hyperswitch Pull Requests (Week: ${weekDate}).
@@ -28,10 +29,10 @@ export async function POST(req: Request) {
       ${list}
 
       INSTRUCTIONS:
-      1. **Highlights:** Pick the top 3 most impactful changes.
+      1. **Highlights:** Identify key themes. Do NOT limit to 3. If there are 5 major themes, list all 5.
       2. **Categorization:** Group remaining items into "Connectors" and "Core & Platform".
-      3. **Structure:** Create ONE unified card per category.
-      4. **Design:** Use "Stripe-like" aesthetic. **CRITICAL:** You must use 'dark:bg-slate-900' and 'dark:border-slate-800' to ensure cards are dark in dark mode.
+      3. **Coverage:** Be COMPREHENSIVE. Do not drop valid connector updates or core features.
+      4. **Design:** Use the "Stripe-like" dark-mode compatible HTML structure provided below.
 
       OUTPUT FORMAT:
       Return ONLY a JSON object: { "html": "..." } containing this EXACT Tailwind HTML structure:
@@ -42,11 +43,11 @@ export async function POST(req: Request) {
            <h3 class="text-xs font-bold uppercase tracking-widest text-indigo-500 dark:text-indigo-400 mb-4 flex items-center gap-2">
               <span class="w-2 h-2 rounded-full bg-indigo-500"></span> Weekly Highlights
            </h3>
-           <div class="grid gap-4 sm:grid-cols-3">
+           <div class="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               <div class="space-y-1">
                  <div class="text-xs font-bold text-slate-800 dark:text-slate-200">Category</div>
                  <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                    Brief summary.
+                    Summary text.
                  </p>
               </div>
            </div>
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
 
         <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
              <div class="bg-slate-50/50 dark:bg-slate-800/50 px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                 <h4 class="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Core & Platform</h4>
             </div>
             <div class="divide-y divide-slate-100 dark:divide-slate-800">
