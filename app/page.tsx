@@ -456,7 +456,7 @@ export default function Page() {
                                 )}
                             </div>
                         ) : (
-                            // LIST VIEW (Clean Table Style)
+                            // LIST VIEW (Unified Card Style)
                             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                                 {week.items.length === 0 ? (
                                     <div className="p-8 text-center text-slate-500 text-sm">No items match filters.</div>
