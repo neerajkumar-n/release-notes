@@ -17,8 +17,6 @@ import {
   Hourglass,
   GitPullRequest,
   CheckCircle2,
-  Calendar,
-  XCircle
 } from 'lucide-react';
 import {
   parseISO,
@@ -121,7 +119,7 @@ export default function Page() {
 
     try {
         // Chunk items
-        const CHUNK_SIZE = 30; // Increased since we are doing grouped lists now
+        const CHUNK_SIZE = 35; 
         const chunks = [];
         for (let i = 0; i < week.items.length; i += CHUNK_SIZE) {
             chunks.push(week.items.slice(i, i + CHUNK_SIZE));
@@ -137,8 +135,6 @@ export default function Page() {
 
         const results = await Promise.all(chunkPromises);
         const combinedFragments = results.map(r => r.summaryFragment || '').join('');
-        
-        // The API now returns the FULL HTML structure for the card, so we just use it directly.
         const finalHtml = combinedFragments; 
 
         setSummaries(prev => ({ ...prev, [week.id]: finalHtml }));
@@ -415,21 +411,21 @@ export default function Page() {
                         {viewMode === 'summary' && !isContentFiltered ? (
                             <div className="relative">
                                 {week.aiSummary ? (
-                                    // AI Summary is now a full layout (Cards/Lists), so we render full width
+                                    // RENDER SUMMARY (AI HTML)
                                     <div 
                                       className="w-full"
                                       dangerouslySetInnerHTML={{ __html: week.aiSummary }}
                                     />
                                 ) : (
-                                    // EMPTY STATE
-                                    <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-slate-900/20">
+                                    // EMPTY STATE (Fixed Dark Mode)
+                                    <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 dark:border-slate-700/60 rounded-2xl bg-slate-50/50 dark:bg-slate-800/40 backdrop-blur-sm">
                                         {week.isCurrentWeek ? (
                                             <>
                                                 <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-full mb-3">
                                                     <Hourglass className="text-amber-500" size={24} />
                                                 </div>
-                                                <p className="text-slate-900 dark:text-white font-semibold">Active Development Cycle</p>
-                                                <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                                                <p className="text-slate-900 dark:text-white font-bold">Active Development Cycle</p>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
                                                     Check back next Wednesday for the Executive Summary.
                                                 </p>
                                             </>
@@ -438,14 +434,14 @@ export default function Page() {
                                                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-full mb-3">
                                                     <Sparkles className="text-indigo-500" size={24} />
                                                 </div>
-                                                <p className="text-slate-900 dark:text-white font-semibold mb-4">Summary Not Generated</p>
-                                                <p className="text-xs text-slate-500 mb-6 max-w-sm">
+                                                <p className="text-slate-900 dark:text-white font-bold mb-2">Summary Not Generated</p>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-sm">
                                                     We are working on this data set. Please circle back later or generate it now.
                                                 </p>
                                                 <button 
                                                     onClick={() => generateSummaryForWeek(week)}
                                                     disabled={week.isGenerating}
-                                                    className="group relative inline-flex items-center justify-center gap-2 px-5 py-2 text-xs font-bold text-white transition-all duration-200 bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    className="group relative inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-bold text-white transition-all duration-200 bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shadow-indigo-500/20"
                                                 >
                                                     {week.isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                                                     {week.isGenerating ? 'Analyzing PRs...' : 'Generate with AI'}
@@ -456,21 +452,21 @@ export default function Page() {
                                 )}
                             </div>
                         ) : (
-                            // LIST VIEW (Unified Card Style)
-                            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                            // LIST VIEW (Unified Card Style - Fixed Dark Mode)
+                            <div className="rounded-xl border border-slate-200 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 overflow-hidden shadow-sm backdrop-blur-sm">
                                 {week.items.length === 0 ? (
-                                    <div className="p-8 text-center text-slate-500 text-sm">No items match filters.</div>
+                                    <div className="p-8 text-center text-slate-500 dark:text-slate-400 text-sm">No items match filters.</div>
                                 ) : (
-                                    <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                                    <div className="divide-y divide-slate-100 dark:divide-slate-700/60">
                                         {week.items.map((item, idx) => (
-                                            <div key={idx} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors flex items-start gap-4 group">
+                                            <div key={idx} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors flex items-start gap-4 group relative z-10">
                                                 <div className={`mt-1 shrink-0`}>
                                                     {item.type === 'Feature' ? (
-                                                        <div className="h-6 w-6 rounded-md bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center border border-emerald-200 dark:border-emerald-800/50">
+                                                        <div className="h-6 w-6 rounded-md bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center border border-emerald-200 dark:border-emerald-500/20">
                                                             <Sparkles size={12} className="text-emerald-600 dark:text-emerald-400" />
                                                         </div>
                                                     ) : (
-                                                        <div className="h-6 w-6 rounded-md bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center border border-rose-200 dark:border-rose-800/50">
+                                                        <div className="h-6 w-6 rounded-md bg-rose-100 dark:bg-rose-500/10 flex items-center justify-center border border-rose-200 dark:border-rose-500/20">
                                                             <Hammer size={12} className="text-rose-600 dark:text-rose-400" />
                                                         </div>
                                                     )}
@@ -478,11 +474,11 @@ export default function Page() {
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
                                                         {item.connector && (
-                                                            <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                                            <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600 dark:bg-slate-700 dark:text-slate-300">
                                                                 {item.connector}
                                                             </span>
                                                         )}
-                                                        <a href={item.prUrl} target="_blank" className="text-xs font-mono text-slate-400 hover:text-indigo-500 transition-colors flex items-center gap-0.5">
+                                                        <a href={item.prUrl} target="_blank" className="text-xs font-mono font-medium text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors flex items-center gap-0.5">
                                                             <GitPullRequest size={10} /> #{item.prNumber}
                                                         </a>
                                                     </div>
