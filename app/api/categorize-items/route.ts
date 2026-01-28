@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_API_KEY || '',
-  baseURL: process.env.AI_BASE_URL || 'https://grid.ai.juspay.net',
-});
+import { chatCompletionWithFallback, getModelId } from '@/lib/llm-client';
 
 export const runtime = 'nodejs';
 
@@ -43,8 +38,8 @@ export async function POST(req: Request) {
       }
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: process.env.AI_MODEL_ID || 'glm-latest',
+    const completion = await chatCompletionWithFallback({
+      model: getModelId(),
       messages: [
         { role: 'system', content: 'You are a product classification engine.' },
         { role: 'user', content: prompt + "\n\nInput:\n" + inputList }

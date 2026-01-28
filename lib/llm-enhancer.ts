@@ -1,10 +1,5 @@
 import OpenAI from 'openai';
-
-// Initialize OpenAI client with LiteLLM configuration
-const openai = new OpenAI({
-  apiKey: process.env.AI_API_KEY || '',
-  baseURL: process.env.AI_BASE_URL || 'https://grid.ai.juspay.net',
-});
+import { chatCompletionWithFallback, getModelId } from './llm-client';
 
 type ReleaseItem = {
   title: string;
@@ -45,7 +40,7 @@ export async function enhanceReleaseItems(
     for (const batch of batches) {
       const prompt = buildEnhancementPrompt(batch);
 
-      const completion = await openai.chat.completions.create({
+      const completion = await chatCompletionWithFallback({
         model: modelId,
         messages: [
           {

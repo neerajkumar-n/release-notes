@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_API_KEY || '',
-  baseURL: process.env.AI_BASE_URL || 'https://grid.ai.juspay.net',
-});
+import { chatCompletionWithFallback, getModelId } from '@/lib/llm-client';
 
 export const runtime = 'nodejs';
 
@@ -44,9 +39,9 @@ Return ONLY valid JSON in this format:
   "core": [{"description": "...", "prNumber": "125"}]
 }`;
 
-    // STEP 2: Call LLM
-    const completion = await openai.chat.completions.create({
-      model: process.env.AI_MODEL_ID || 'gpt-4-turbo',
+    // STEP 2: Call LLM with fallback
+    const completion = await chatCompletionWithFallback({
+      model: getModelId('gpt-4-turbo'),
       messages: [
         { role: 'system', content: 'You are a technical release notes analyzer. Return only valid JSON.' },
         { role: 'user', content: prompt }
